@@ -440,41 +440,65 @@ void initVBO()
 
 void init() 
 {
-	//ParseObj("armadillo.obj");
-	//ParseObj("bunny.obj");
-
-
-
     // create Control Points
    /* GLfloat controlPointsX[16];
     GLfloat controlPointsY[16];
     GLfloat controlPointsZ[16];*/
     float x, y, z;
     x = y = z = 0.f;
-    float yDiff = 0.5f;
+    float yDiff = 0.75f;
+    float zDiff = 0.0f;
+
+    srand(static_cast <unsigned> (time(0)));
 
     for (int i = 0; i < 4; i++) {
         x = 0.f;
         for (int j = 0; j < 4; j++) {
             controlPointsX[4 * i + j] = x + j;
-            controlPointsY[4 * i + j] = y - (i *yDiff);
-            controlPointsZ[4 * i + j] = z;
+            controlPointsY[4 * i + j] = y - i;
 
-            cout << "Control point: " << x + j << "," << controlPointsY[3 * i + j] << "," << z << endl;
+            float randZOffset = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / 2.0f));
+            controlPointsZ[4 * i + j] = 0.f;
+            //controlPointsZ[4 * i + j] = z - randZOffset;
+
+            cout << "Control point: " << x + j << "," << controlPointsY[4* i + j] << "," << z << endl;
         }
     }
-    
+
+    //controlPointsZ[0] += 1.5f;
+
+   /* controlPointsZ[6] += 0.25f;
+    controlPointsZ[7] += 0.3f;*/
+    //controlPointsZ[10] += 0.f;
+    cout << "BEFORE: " << controlPointsX[15] << endl;
+    //controlPointsX[3] -= 0.05f;
+    cout << "AFTER: " << controlPointsX[15] << endl;
+
+    float change = -0.35f;
+    float change2 = -0.3f;
+    controlPointsY[1] += change;
+    controlPointsY[5] += change;
+    controlPointsY[9] += change;
+    controlPointsY[13] += change;
+
+    //controlPointsY[3] -= change2;/*
+    //controlPointsY[7] -= change2;
+    //controlPointsY[11] -= change2;
+    //controlPointsY[15] -= change2;*/
+
+    controlPointsZ[15] += 0.5f;
+
 
     gNormals.clear();
     gVertices.clear();
     gFaces.clear();
     gTextures.clear();
 
-    int sMax = 2;
-    int tMax = 2;
+    int sMax = 3;
+    int tMax = 3;
 
 
-    int samples = 100;
+    int samples = 10;
     float increment = (float)sMax / samples;
     cout << "Increment: " << increment << endl;
 
@@ -498,11 +522,6 @@ void init()
            
         }
     }
-
- /*   gVertices.push_back(Vertex(0.f, 0.f, 0.f)); 
-    gVertices.push_back(Vertex(0.f, -1.f, 0.f));
-    gVertices.push_back(Vertex(1.f, 0.f, 0.f));
-    gVertices.push_back(Vertex(1.f, -1.f, 0.f));*/
 
     int vIndex[3], nIndex[3], tIndex[3];
     int sres = 0;
@@ -590,7 +609,7 @@ void display()
 	
 	// Compute the modeling matrix
 
-	modelingMatrix = glm::translate(glm::mat4(1.0), glm::vec3(-2.0f, 0.0f, -15.0f));
+	modelingMatrix = glm::translate(glm::mat4(1.0), glm::vec3(-4.0f, 4.0f, -30.0f));
 	//modelingMatrix = glm::rotate(modelingMatrix, angleRad, glm::vec3(0.0, 1.0, 0.0));
     //glm::mat4 matT = glm::translate(glm::mat4(1.0), glm::vec3(-0.5f, -0.4f, -5.0f));   // same as above but more clear
     ////glm::mat4 matR = glm::rotate(glm::mat4(1.0), angleRad, glm::vec3(0.0, 1.0, 0.0));
@@ -708,9 +727,9 @@ Vertex bezierSurface(float s, float t)
     for (int i = 0; i <= 3; i++) {
         for (int j = 0; j <= 3; j++) {
             float bernsteinTerm = bernstein3(i, s) * bernstein3(j, t);
-            resX += bernsteinTerm * controlPointsX[4*i +j];
-            resY += bernsteinTerm * controlPointsY[4*i+j];
-            resZ += bernsteinTerm * controlPointsZ[4*i+j];
+            resX += bernsteinTerm * controlPointsX[4*j+i];
+            resY += bernsteinTerm * controlPointsY[4*j+i];
+            resZ += bernsteinTerm * controlPointsZ[4*j+i];
         }
     }
     return Vertex(resX, resY, resZ);
