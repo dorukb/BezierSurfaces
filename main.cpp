@@ -17,6 +17,8 @@
 #include <glm/gtc/type_ptr.hpp> 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <chrono>
+#include <ctime>  
 
 #define BUFFER_OFFSET(i) ((char*)NULL + (i))
 
@@ -34,12 +36,22 @@ GLfloat controlPointsX[16];
 GLfloat controlPointsY[16];
 GLfloat controlPointsZ[16];
 
+
+GLfloat controlPointsYCopy[16];
+GLfloat controlPointsZCopy[16];
+
 glm::mat4 projectionMatrix;
 glm::mat4 viewingMatrix;
 glm::mat4 modelingMatrix;
 glm::vec3 eyePos(0, 0, 0);
 
 int activeProgramIndex = 0;
+int samples = 10;
+
+int sMax = 3;
+int tMax = 3;
+float increment;
+std::chrono::steady_clock::time_point starttime;
 
 struct Vertex
 {
@@ -87,6 +99,9 @@ int gVertexDataSizeInBytes, gNormalDataSizeInBytes;
 int fact(int n);
 float bernstein3(int i, float t);
 Vertex bezierSurface(float s, float t);
+void modifyControlPointsY(int colIndex, float deltaVal, int incr);
+void modifyControlPointsZ(int colIndex, float deltaVal, int increment);
+
 
 bool ParseObj(const string& fileName)
 {
@@ -362,7 +377,7 @@ void initVBO()
     glGenVertexArrays(1, &vao);
     assert(vao > 0);
     glBindVertexArray(vao);
-    cout << "vao = " << vao << endl;
+    //cout << "vao = " << vao << endl;
 
 	glEnableVertexAttribArray(0);
 	glEnableVertexAttribArray(1);
@@ -383,7 +398,7 @@ void initVBO()
 	GLfloat* normalData = new GLfloat [gNormals.size() * 3];
 	GLuint* indexData = new GLuint [gFaces.size() * 3];
 
-    cout << "vert size: " << gVertices.size() << " norm size: " << gNormals.size() << " facesSize: " << gFaces.size() << endl;
+    //cout << "vert size: " << gVertices.size() << " norm size: " << gNormals.size() << " facesSize: " << gFaces.size() << endl;
     float minX = 1e6, maxX = -1e6;
     float minY = 1e6, maxY = -1e6;
     float minZ = 1e6, maxZ = -1e6;
@@ -402,12 +417,12 @@ void initVBO()
         maxZ = std::max(maxZ, gVertices[i].z);
 	}
 
-    std::cout << "minX = " << minX << std::endl;
-    std::cout << "maxX = " << maxX << std::endl;
-    std::cout << "minY = " << minY << std::endl;
-    std::cout << "maxY = " << maxY << std::endl;
-    std::cout << "minZ = " << minZ << std::endl;
-    std::cout << "maxZ = " << maxZ << std::endl;
+    //std::cout << "minX = " << minX << std::endl;
+    //std::cout << "maxX = " << maxX << std::endl;
+    //std::cout << "minY = " << minY << std::endl;
+    //std::cout << "maxY = " << maxY << std::endl;
+    //std::cout << "minZ = " << minZ << std::endl;
+    //std::cout << "maxZ = " << maxZ << std::endl;
 
 	for (int i = 0; i < gNormals.size(); ++i)
 	{
@@ -441,9 +456,6 @@ void initVBO()
 void init() 
 {
     // create Control Points
-   /* GLfloat controlPointsX[16];
-    GLfloat controlPointsY[16];
-    GLfloat controlPointsZ[16];*/
     float x, y, z;
     x = y = z = 0.f;
     float yDiff = 0.75f;
@@ -456,38 +468,19 @@ void init()
         for (int j = 0; j < 4; j++) {
             controlPointsX[4 * i + j] = x + j;
             controlPointsY[4 * i + j] = y - i;
+            controlPointsYCopy[4 * i + j] = y - i;
 
             float randZOffset = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / 2.0f));
             controlPointsZ[4 * i + j] = 0.f;
+            controlPointsZCopy[4 * i + j] = 0.f;
             //controlPointsZ[4 * i + j] = z - randZOffset;
 
             cout << "Control point: " << x + j << "," << controlPointsY[4* i + j] << "," << z << endl;
         }
     }
 
-    //controlPointsZ[0] += 1.5f;
-
-   /* controlPointsZ[6] += 0.25f;
-    controlPointsZ[7] += 0.3f;*/
-    //controlPointsZ[10] += 0.f;
-    cout << "BEFORE: " << controlPointsX[15] << endl;
-    //controlPointsX[3] -= 0.05f;
-    cout << "AFTER: " << controlPointsX[15] << endl;
-
-    float change = -0.35f;
-    float change2 = -0.3f;
-    controlPointsY[1] += change;
-    controlPointsY[5] += change;
-    controlPointsY[9] += change;
-    controlPointsY[13] += change;
-
-    //controlPointsY[3] -= change2;/*
-    //controlPointsY[7] -= change2;
-    //controlPointsY[11] -= change2;
-    //controlPointsY[15] -= change2;*/
-
-    controlPointsZ[15] += 0.5f;
-
+    float change = -0.15f;
+    float change2 = 0.2f;
 
     gNormals.clear();
     gVertices.clear();
@@ -498,11 +491,10 @@ void init()
     int tMax = 3;
 
 
-    int samples = 10;
-    float increment = (float)sMax / samples;
+    samples = 10;
+    increment = (float)sMax / samples;
     cout << "Increment: " << increment << endl;
 
-    vector<glm::vec3> bezierVertices;
     // create bezier surface, with 4 vertices? a rectangle really.
 
     float sampledT = 0.f;
@@ -555,29 +547,8 @@ void init()
             }
         }
     }
-    // top left vertex
-    //gTextures.push_back(Texture(0.f,0.f));
-    //gNormals.push_back(Normal(0.f, 0.f, -1.0f));
-
-  /*  int vIndex[3], nIndex[3], tIndex[3];
-    for (int k = 0; k < 3; k++) {
-        vIndex[k] = k;
-        nIndex[k] = k;
-        tIndex[k] = k;
-    }
-    gFaces.push_back(Face(vIndex, tIndex, nIndex));
-
-    for (int k = 0; k < 3; k++) {
-        vIndex[k] = 3-k;
-        nIndex[k] = 3-k;
-        tIndex[k] = 3-k;
-    }
-    gFaces.push_back(Face(vIndex, tIndex, nIndex));*/
-
-    //for (int i = 0; i < gFaces.size(); i++) {
-    //    cout << "Face:" << gFaces[i].vIndex[0] << "," << gFaces[i].vIndex[1] << "," << gFaces[i].vIndex[2] << endl;
-    //}
-
+   
+    starttime = std::chrono::steady_clock::now();
 
     glEnable(GL_DEPTH_TEST);
     initShaders();
@@ -610,100 +581,85 @@ void display()
 	// Compute the modeling matrix
 
 	modelingMatrix = glm::translate(glm::mat4(1.0), glm::vec3(-4.0f, 4.0f, -30.0f));
-	//modelingMatrix = glm::rotate(modelingMatrix, angleRad, glm::vec3(0.0, 1.0, 0.0));
-    //glm::mat4 matT = glm::translate(glm::mat4(1.0), glm::vec3(-0.5f, -0.4f, -5.0f));   // same as above but more clear
-    ////glm::mat4 matR = glm::rotate(glm::mat4(1.0), angleRad, glm::vec3(0.0, 1.0, 0.0));
-    //glm::mat4 matRx = glm::rotate<float>(glm::mat4(1.0), (-90. / 180.) * M_PI, glm::vec3(1.0, 0.0, 0.0));
-    //glm::mat4 matRy = glm::rotate<float>(glm::mat4(1.0), (-90. / 180.) * M_PI, glm::vec3(0.0, 1.0, 0.0));
-    //glm::mat4 matRz = glm::rotate<float>(glm::mat4(1.0), angleRad, glm::vec3(0.0, 0.0, 1.0));
-    //modelingMatrix = matRy * matRx;
+    
 
-    // Let's make some alternating roll rotation
-    static float rollDeg = 0.f;
-    //static float changeRoll = 2.5;
-    static float changeRoll = 0.5f;
+    // animate Y coordinates of some selected Control Points.
+    
+
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+
+    //std::cout << "Time difference = " << std::chrono::duration_cast<std::chrono::seconds>(end - starttime).count() << "[sec]" << std::endl;
+
+    float change1 = 0.12f;
+    float change2 = 0.07f;
+
+    float sinFactor = 0.25f;
+    long long msCount = std::chrono::duration_cast<std::chrono::milliseconds>(end - starttime).count();
+
+    angle = msCount * sinFactor;
+
+    angleRad = (float)(angle / 180.0) * M_PI;
+    float sinVal = glm::sin(angleRad);
+    float sinVal2 = glm::sin((1-sinVal) *1.1f);
+    float change1Animated = change1 * sinVal2 * 2.f;
+
+    float sinVal4 = glm::sin(sinVal2 * 3.f) * 0.55f;
+    float change2Animated = change2 * sinVal4;
+    //float sinVal3 = glm::sin((sinVal+sinVal2) * 0.6f);
+
+    float fastChange = change2 * glm::sin((0.2f*sinVal-sinVal2) * 4.f);
+
+  /*  controlPointsY[1] += change1Animated;
+    controlPointsY[5] += change1Animated;
+    controlPointsY[9] += change1Animated;
+    controlPointsY[13] += change1Animated;*/
 
 
+     //controlPointsZ[4] = controlPointsZCopy[4] + change1Animated;
+     //controlPointsZ[8] = controlPointsZCopy[8]+ change1Animated;
 
-    float startRoll = 0;
-    float endRoll = 90.f;
+   /* modifyControlPointsZ(2, 0.25f * change1 * (1-sinVal), 4);
+    modifyControlPointsY(0, 0.9f * change1 *sinVal, 4);
+    modifyControlPointsY(3, change2 * sinVal, 4);*/
+    //modifyControlPointsY(0, change1Animated * 2.f,4);
+    ///wokring
+    modifyControlPointsZ(2, 0.25f * fastChange, 4);
+    modifyControlPointsY(0, 0.4f* change1Animated,4);
+    modifyControlPointsY(3, change2Animated, 4);
+    //working
 
-    float rollRad = (float) (rollDeg / 180.f) * M_PI;
-    rollDeg += changeRoll;
-    if (rollDeg >= endRoll || rollDeg <= startRoll) // was 10.
-    {
-        changeRoll *= -1.f;
-    }
-    //glm::mat4 matRoll = glm::rotate<float>(glm::mat4(1.0), rollRad, glm::vec3(1.0, 0.0, 0.0));
-
-    // Let's make some pitch rotation
-    static float pitchDeg = 0;
-    //static float changePitch = 0.1;
-    static float changePitch = 0.08;
-
-  /*  float startPitch = 0;
-    float endPitch = 90;
-    float pitchRad = (float) (pitchDeg / 180.f) * M_PI;
-    pitchDeg += changePitch;
-    if (pitchDeg >= endPitch)
-    {
-        changePitch = 0;
+   /* int start = 0;
+    for (int i = start; i <= 15; i += 4) {
+        controlPointsY[i] = controlPointsYCopy[i] + change1Animated;
     }*/
 
-    float startPitch = 0;
-    float endPitch = 90;
-    float pitchRad = (float)(pitchDeg / 180.f) * M_PI;
-    pitchDeg += changePitch;
-    if (pitchDeg >= endPitch)// || pitchDeg <= startPitch)
-    {
-        changePitch = 0.f;
+   /* start = 3;
+    for (int i = start; i <= 15; i+=4) {
+        controlPointsY[i] = controlPointsYCopy[i] + change2Animated;
+    }*/
+
+
+    float sampledT = 0.f;
+    float sampledS = 0.f;
+    increment = (float)sMax / samples;
+
+    for (int s = 0; s < samples; s++) {
+        for (int t = 0; t < samples; t++) {
+            //glm::vec3 vertex = bezierSurface(s, t);
+
+            sampledT = t * increment;
+            sampledS = s * increment;
+            //cout << "t:" << sampledT << "s:" << sampledS << endl;
+
+            gVertices[s * samples + t] = bezierSurface(sampledT, sampledS);
+            //gNormals.push_back(Normal(0.f, 0.f, 1.0f));  //normals will change actually.
+        }
     }
-    //glm::mat4 matPitch = glm::rotate<float>(glm::mat4(1.0), pitchRad, glm::vec3(0.0, 0.0, 1.0));
-    //modelingMatrix = matRoll * matPitch * modelingMatrix; // gimbal lock
-    //modelingMatrix = matPitch * matRoll * modelingMatrix;   // no gimbal lock
 
-     
-    //glm::quat q0(0, 1, 0, 0); // along x
-    //glm::quat q1(0, 0, 1, 0); // along y
-    //glm::quat q = glm::mix(q0, q1, (pitchDeg - startPitch) / (endPitch - startPitch));
 
-    //float sint = sin(rollRad / 2);
-    //glm::quat rollQuat(cos(rollRad/2), sint * q.x, sint * q.y, sint * q.z);
-    //glm::quat pitchQuat(cos(pitchRad/2), 0, 0, 1 * sin(pitchRad/2));
-    //modelingMatrix = matT * glm::toMat4(rollQuat)  * glm::toMat4(pitchQuat) * modelingMatrix;
-    // first pitch, then roll.
-
-   
-    //cout << rollQuat.w << " " << rollQuat.x << " " << rollQuat.y << " " << rollQuat.z << endl;
+    initVBO();
 
 	// Set the active program and the values of its uniform variables
-
-
-    //glm::quat q3(0, 0, 0, 1); // along +z
-    //glm::quat q4(0, 0, -1, 0); // along -z?
-
-    //float initRad = (float)(20.f / 180.f) * M_PI;
-    //glm::quat rot(cos(initRad / 2), 1 * sin(initRad / 2), 0, 0);
-
-    //glm::vec4 newAxis = glm::toMat4(rot)* glm::vec4(0, 0, 1, 1);
-
-    //glm::quat q4(0, newAxis.x, newAxis.y, newAxis.z);
-
-    // q4 now should be along -z.
-
-    //glm::quat q = glm::mix(q3, q4, (rollDeg - startRoll) / (endRoll - startRoll));
-
-    //glm::quat rollQuat(cos(rollRad / 2), 1 * sin(rollRad/2),0, 0);
-
-    //float sint = sin(pitchRad / 2);
-    //glm::quat pitchQuat(cos(pitchRad / 2), sint * q.x, sint * q.y, sint * q.z);
-
-    //modelingMatrix = matT * glm::toMat4(rollQuat) * glm::toMat4(pitchQuat) * modelingMatrix;
-    // first roll, then pitch!
-
-    //modelingMatrix = matT * modelingMatrix;
-
-    //modelingMatrix = glm::mat4(1);
 
 
 	glUseProgram(gProgram[activeProgramIndex]);
@@ -714,8 +670,35 @@ void display()
 
 	// Draw the scene
     drawModel();
+}
 
-	angle += 0.5;
+void modifyControlPointsY(int colIndex, float deltaVal, int increment) 
+{
+    if (increment == 1) {
+        for (int i = colIndex; i <= colIndex+3; i += increment) {
+            controlPointsY[i] = controlPointsYCopy[i] + deltaVal;
+        }
+    }
+    else {
+        for (int i = colIndex; i <= 15; i += increment) {
+            controlPointsY[i] = controlPointsYCopy[i] + deltaVal;
+        }
+    }
+}
+
+void modifyControlPointsZ(int colIndex, float deltaVal, int increment)
+{
+    if (increment == 1) {
+        for (int i = colIndex; i <= colIndex + 3; i += increment) {
+            controlPointsZ[i] = controlPointsZCopy[i] + deltaVal;
+        }
+    }
+    else {
+        for (int i = colIndex; i <= 15; i += increment) {
+            controlPointsZ[i] = controlPointsZCopy[i] + deltaVal;
+        }
+
+    }
 }
 
 Vertex bezierSurface(float s, float t)
