@@ -20,8 +20,10 @@ uniform vec3 eyePos;
 
 layout(location=0) in vec3 inVertex;
 layout(location=1) in vec3 inNormal;
+layout(location=2) in vec2 inTexCoord;
 
 out vec4 color;
+out vec2 uv;
 
 void main(void)
 {
@@ -54,6 +56,7 @@ void main(void)
 	// to the fragment shader after it is interpolated at every fragment.
 	// Front color specifies the color of a vertex for a front facing
 	// primitive.
+	uv = inTexCoord.xy;
 
 	color = vec4(diffuseColor + specularColor + ambientColor, 1);
 

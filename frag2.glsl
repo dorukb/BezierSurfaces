@@ -17,8 +17,11 @@ uniform vec3 eyePos;
 
 in vec4 fragWorldPos;
 in vec3 fragWorldNor;
+in vec2 uv;
 
 out vec4 fragColor;
+
+uniform sampler2D flagSampler;
 
 void main(void)
 {
@@ -34,9 +37,16 @@ void main(void)
 	float NdotL = dot(N, L); // for diffuse component
 	float NdotH = dot(N, H); // for specular component
 
-	vec3 diffuseColor = I * kd * max(0, NdotL);
+
+	vec4 kdTex= texture(flagSampler, uv);
+
+	//vec3 diffuseColor = I * kd * max(0, NdotL);
+	vec3 diffuseColor = I * kdTex.xyz * max(0, NdotL);
+
 	vec3 specularColor = I * ks * pow(max(0, NdotH), 100);
 	vec3 ambientColor = Iamb * ka;
 
-	fragColor = vec4(diffuseColor + specularColor + ambientColor, 1);
+	//fragColor = vec4(diffuseColor + specularColor + ambientColor, 1);
+
+	fragColor = vec4(1.0f,0,0,1.0f);
 }

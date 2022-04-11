@@ -1,3 +1,5 @@
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -48,7 +50,7 @@ glm::mat4 modelingMatrix;
 glm::vec3 eyePos(0, 0, 0);
 
 int activeProgramIndex = 0;
-int samples = 30;
+int samples = 20;
 
 //int sMax = 3;
 //int tMax = 3;
@@ -102,13 +104,20 @@ vector<Face> gFaces;
 
 GLuint gVertexAttribBuffer, gIndexBuffer;
 GLint gInVertexLoc, gInNormalLoc;
-int gVertexDataSizeInBytes, gNormalDataSizeInBytes;
+int gVertexDataSizeInBytes, gNormalDataSizeInBytes, gTextureDataSizeInBytes;
 
 vector<GLfloat[16]> patchControlPointsX;
 vector<GLfloat[16]> patchControlPointsY;
 vector<GLfloat[16]> patchControlPointsYCopy;
 
 vector<GLfloat[16]> patchControlPointsZ;
+
+// i'th entry: all tri id's in which vertex i appears.
+// can appear in at most 6 triangles.
+//vector<GLint[6]> triangleIndicesPerVertex;
+// init to -1
+vector<vector<int>> triangleIndicesPerVertex;
+vector<Normal> triNormals;
 
 int fact(int n);
 float bernstein3(int i, float t);
@@ -118,6 +127,11 @@ Vertex patchedBezierSurface(float s, float t, int patchIndex);
 void modifyControlPointsY(int colIndex, float deltaVal, int incr);
 void modifyControlPointsZ(int colIndex, float deltaVal, int increment);
 void patchModifyY(int colIndex, float deltaVal, int increment, int patchInd);
+void patchModifyZ(int colIndex, float val, int increment, int patchInd);
+
+void calculateNormals();
+void updateTriangleNormals();
+void updateNormalsNoAlloc();
 
 
 bool ParseObj(const string& fileName)
@@ -364,7 +378,7 @@ void initShaders()
 
 	if (status != GL_TRUE)
 	{
-		cout << "Program link failed" << endl;
+		cout << "Program 0 link failed" << endl;
 		exit(-1);
 	}
 
@@ -373,7 +387,7 @@ void initShaders()
 
 	if (status != GL_TRUE)
 	{
-		cout << "Program link failed" << endl;
+		cout << "Program 1 link failed" << endl;
 		exit(-1);
 	}
 
@@ -398,6 +412,7 @@ void initVBO()
 
 	glEnableVertexAttribArray(0);
 	glEnableVertexAttribArray(1);
+    glEnableVertexAttribArray(2);
 	assert(glGetError() == GL_NONE);
 
 	glGenBuffers(1, &gVertexAttribBuffer);
@@ -410,9 +425,13 @@ void initVBO()
 
 	gVertexDataSizeInBytes = gVertices.size() * 3 * sizeof(GLfloat);
 	gNormalDataSizeInBytes = gNormals.size() * 3 * sizeof(GLfloat);
+    gTextureDataSizeInBytes = gTextures.size() * 2 * sizeof(GLfloat);
+    //cout << "tsize:" << gTextureDataSizeInBytes << "normal:"<<gNormalDataSizeInBytes << endl;
+
 	int indexDataSizeInBytes = gFaces.size() * 3 * sizeof(GLuint);
 	GLfloat* vertexData = new GLfloat [gVertices.size() * 3];
 	GLfloat* normalData = new GLfloat [gNormals.size() * 3];
+    GLfloat* textureData = new GLfloat[gTextures.size() * 2];
 	GLuint* indexData = new GLuint [gFaces.size() * 3];
 
     //cout << "vert size: " << gVertices.size() << " norm size: " << gNormals.size() << " facesSize: " << gFaces.size() << endl;
@@ -454,49 +473,58 @@ void initVBO()
 		indexData[3*i+1] = gFaces[i].vIndex[1];
 		indexData[3*i+2] = gFaces[i].vIndex[2];
 	}
+    
+    for (int i = 0; i < gTextures.size(); i++) 
+    {   
+        textureData[2 * i] = gTextures[i].u;
+        textureData[2 * i+1] = gTextures[i].v;
+    }
 
 
-	glBufferData(GL_ARRAY_BUFFER, gVertexDataSizeInBytes + gNormalDataSizeInBytes, 0, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, gVertexDataSizeInBytes + gNormalDataSizeInBytes + gTextureDataSizeInBytes, 0, GL_STATIC_DRAW);
 	glBufferSubData(GL_ARRAY_BUFFER, 0, gVertexDataSizeInBytes, vertexData);
 	glBufferSubData(GL_ARRAY_BUFFER, gVertexDataSizeInBytes, gNormalDataSizeInBytes, normalData);
+    glBufferSubData(GL_ARRAY_BUFFER, gVertexDataSizeInBytes+ gNormalDataSizeInBytes, gTextureDataSizeInBytes, textureData);
+
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexDataSizeInBytes, indexData, GL_STATIC_DRAW);
 
 	// done copying; can free now
 	delete[] vertexData;
 	delete[] normalData;
 	delete[] indexData;
+    delete[] textureData;
 
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(gVertexDataSizeInBytes));
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(gVertexDataSizeInBytes+ gNormalDataSizeInBytes));
+
 }
 
 void init() 
 {
-    // create Control Points
-    float x, y, z;
-    x = y = z = 0.f;
-    float yDiff = 0.75f;
-    float zDiff = 0.0f;
+    int width, height, nrChannels;
+    unsigned char* data = stbi_load("metu_flag.jpg", &width, &height, &nrChannels, 0);
+    cout << "Texture W:" << width << " H:" << height << endl;
+
+    unsigned int flag;
+    glGenTextures(1, &flag);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, flag);
+
+    // set the texture wrapping/filtering options (on the currently bound texture object)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    stbi_image_free(data);
 
     srand(static_cast <unsigned> (time(0)));
 
-    //for (int i = 0; i < 4; i++) {
-    //    x = 0.f;
-    //    for (int j = 0; j < 4; j++) {
-    //        controlPointsX[4 * i + j] = x + j;
-    //        controlPointsY[4 * i + j] = y - i;
-    //        controlPointsYCopy[4 * i + j] = y - i;
-
-    //        float randZOffset = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / 2.0f));
-    //        controlPointsZ[4 * i + j] = 0.f;
-    //        controlPointsZCopy[4 * i + j] = 0.f;
-    //        //controlPointsZ[4 * i + j] = z - randZOffset;
-
-    //        cout << "Control point: " << x + j << "," << controlPointsY[4* i + j] << "," << z << endl;
-    //    }
-    //}
-
-
+    // create Control Points
     patchControlPointsX = vector<GLfloat[16]>(totalPatchCount);
     patchControlPointsY = vector<GLfloat[16]>(totalPatchCount);
     patchControlPointsYCopy = vector<GLfloat[16]>(totalPatchCount);
@@ -526,45 +554,44 @@ void init()
                     patchControlPointsX[cpIndex][ind] =(j * increment) + xOffset;
                     patchControlPointsY[cpIndex][ind] = -((i * increment) + yOffset);
                     patchControlPointsYCopy[cpIndex][ind] = -((i * increment) + yOffset);
-
-                    //controlPointsYCopy[4 * i + j] = y - i - (p * xDiv);
-
-                    //float randZOffset = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / 2.0f));
                     patchControlPointsZ[cpIndex][ind] = 0.f;
-                    //controlPointsZCopy[4 * i + j] = 0.f;
-                    //controlPointsZ[4 * i + j] = z - randZOffset;
-
-                    cout << "Control point: " << patchControlPointsX[cpIndex][ind] << "," << patchControlPointsY[cpIndex][ind] << "," << z << endl;
+                    //cout << "Control point: " << patchControlPointsX[cpIndex][ind] << "," << patchControlPointsY[cpIndex][ind] << "," << z << endl;
                 }
             }
         }
     }
-   
-
-
-
-    float change = -0.15f;
-    float change2 = 0.2f;
 
     gNormals.clear();
     gVertices.clear();
     gFaces.clear();
     gTextures.clear();
 
+    int vertexCount = samples * samples * totalPatchCount;
+    triangleIndicesPerVertex = vector<vector<int>>(vertexCount, vector<int>());
+
     increment = 1.0f / (samples-1);
     
     int vIndex = 0;
+    int faceIndex = 0;
+
+    glm::vec3 a, b, normal;
+
+    float uvPiece = 1.0f / patchPerAxis;
+    // if two patches in either direction, each patch gets 0.5, 0.5 sized pieces. + offset value\
+
     for (int k = 0; k < patchPerAxis; k++) 
     {
+        float vOffset = k * uvPiece;
         for (int p = 0; p < patchPerAxis; p++)
         {
+            float uOffset = p * uvPiece;
 
             float sampledT = 0.f;
             float sampledS = 0.f;
 
             int patchInd = k * patchPerAxis + p;
             //cout << "tOffset for patch: " << patchInd << " is " << tOffset <<" sOffset: " << sOffset << endl;
-
+            cout << "UVs patch: " << patchInd << endl;
             for (int s = 0; s < samples; s++) {
                 for (int t = 0; t < samples; t++) {
                     //glm::vec3 vertex = bezierSurface(s, t);
@@ -573,16 +600,17 @@ void init()
                     sampledS = s * increment;
                     //cout << "t:" << sampledT << "s:" << sampledS << endl;
 
-                    auto v=  patchedBezierSurface(sampledS, sampledT, patchInd);
+                    //auto vert = patchedBezierSurface(sampledS, sampledT, patchInd);
                     //cout <<"(t,s):"<< sampledT <<","<< sampledS << " V" <<vIndex<<": " << v.x << "," << v.y <<endl;
-                    gVertices.push_back(v);
+                    gVertices.push_back(patchedBezierSurface(sampledS, sampledT, patchInd));
                     vIndex++;
 
-                    // normal calculation is not doneee
-                    gNormals.push_back(Normal(0.f, 0.f, 1.0f));
-
-                    // UV creation is mostly wrong.
-                    gTextures.push_back(Texture((float)sampledT, (float)sampledS));
+                    //gNormals.push_back(Normal(0.f, 0.f, 1.0f));
+                    float u = sampledT * uvPiece + uOffset;
+                    float v = sampledS * uvPiece + vOffset;
+                    // TODO TODO TOOD fix! UV creation is mostly wrong.
+                    cout << "U: " << u << " v: " << v << endl;
+                    gTextures.push_back(Texture(u, v));
 
                 }
             }
@@ -609,7 +637,28 @@ void init()
                         vIndex[1] = nIndex[1] = tIndex[1] = second;
                         vIndex[2] = nIndex[2] = tIndex[2] = last;
                         //cout << first << "," << second << "," << last << endl;
+
+                        //cout << "Size: " << triangleIndicesPerVertex.size() << endl;
+                        triangleIndicesPerVertex[first].push_back(faceIndex);
+                        triangleIndicesPerVertex[second].push_back(faceIndex);
+                        triangleIndicesPerVertex[last].push_back(faceIndex);
+
                         gFaces.push_back(Face(vIndex, tIndex, nIndex));
+
+                        a = glm::vec3(gVertices[second].x - gVertices[first].x, 
+                            gVertices[second].y - gVertices[first].y, 
+                            gVertices[second].z - gVertices[first].z);
+
+                        b = glm::vec3(gVertices[last].x - gVertices[first].x,
+                            gVertices[last].y - gVertices[first].y,
+                            gVertices[last].z - gVertices[first].z);
+
+                        // Nx = Ay * Bz - Az * By;
+                        //Ny = Az * Bx - Ax * Bz;
+                        //Nz = Ax * By - Ay * Bx;
+                        //glm::cross()
+                        triNormals.push_back(Normal(a.y* b.z - a.z * b.y, a.z* b.x - a.x * b.z, a.x* b.y - a.y * b.x));
+                        faceIndex++;
                     }
                     if (s > 0) {
                         last = second - res;
@@ -619,78 +668,127 @@ void init()
                         vIndex[2] = nIndex[2] = tIndex[2] = last;
                         //cout << second << "," << first << "," << last << endl;
                         gFaces.push_back(Face(vIndex, tIndex, nIndex));
+                        //cout << "Size: " << triangleIndicesPerVertex.size() << endl;
+
+                        triangleIndicesPerVertex[first].push_back(faceIndex);
+                        triangleIndicesPerVertex[second].push_back(faceIndex);
+                        triangleIndicesPerVertex[last].push_back(faceIndex);
+
+
+                        a = glm::vec3(gVertices[first].x - gVertices[second].x,
+                            gVertices[first].y - gVertices[second].y,
+                            gVertices[first].z - gVertices[second].z);
+
+                        b = glm::vec3(gVertices[last].x - gVertices[second].x,
+                            gVertices[last].y - gVertices[second].y,
+                            gVertices[last].z - gVertices[second].z);
+
+                        // Nx = Ay * Bz - Az * By;
+                        //Ny = Az * Bx - Ax * Bz;
+                        //Nz = Ax * By - Ay * Bx;
+                        //glm::cross()
+                        normal.x = a.y * b.z - a.z * b.y;
+                        normal.y = a.z * b.x - a.x * b.z;
+                        normal.z = a.x * b.y - a.y * b.x;
+                        normal = glm::normalize(-normal);
+                        //cout << "normal: " << normal.x << "," << normal.y << "," << normal.z << endl;
+                        triNormals.push_back(Normal(normal.x, normal.y, normal.z));
+
+                        faceIndex++;
                     }
                 }
             }
 
         }
     }
-    
-    //samples = 100;
-    //increment = sDiv / samples;
-    //cout << "Increment: " << increment << endl;
 
-    //// create bezier surface, with 4 vertices? a rectangle really.
+    calculateNormals();
 
-    //float sampledT = 0.f;
-    //float sampledS = 0.f;
-
-    //for (int s = 0; s < samples; s++) {
-    //    for (int t = 0; t < samples; t++) {
-    //        //glm::vec3 vertex = bezierSurface(s, t);
-
-    //        sampledT = t * increment;
-    //        sampledS = s * increment;
-    //        //cout << "t:" << sampledT << "s:" << sampledS << endl;
-
-    //        gVertices.push_back(bezierSurface(sampledT, sampledS));
-    //        gNormals.push_back(Normal(0.f, 0.f, 1.0f));
-    //        gTextures.push_back(Texture((float)t, (float)s));
-    //       
-    //    }
-    //}
-
-    //int vIndex[3], nIndex[3], tIndex[3];
-    //int sres = 0;
-    //int first, second, last;
-    //int res = samples;
-
-    //for (int s = 0; s < res; s++) {
-    //    for (int t = 0; t < res-1; t++) {
-
-    //        //cout << "s: " << s << " t: " << t << endl;
-    //        sres = s * res;
-    //        first = t + sres;
-    //        second = first + 1;
-    //        last = first + res;
-
-    //        if (s < res - 1) {
-    //            vIndex[0] = nIndex[0] = tIndex[0] = first;
-    //            vIndex[1] = nIndex[1] = tIndex[1] = second;
-    //            vIndex[2] = nIndex[2] = tIndex[2] = last;
-    //            //cout << first << "," << second << "," << last << endl;
-    //            gFaces.push_back(Face(vIndex, tIndex, nIndex));
-    //        }
-    //        if (s > 0) {
-    //            last = second - res;
-
-    //            vIndex[0] = nIndex[0] = tIndex[0] = second;
-    //            vIndex[1] = nIndex[1] = tIndex[1] = first;
-    //            vIndex[2] = nIndex[2] = tIndex[2] = last;
-    //            //cout << second << "," << first << "," << last << endl;
-    //            gFaces.push_back(Face(vIndex, tIndex, nIndex));
-    //        }
-    //    }
-    //}
-   
     starttime = std::chrono::steady_clock::now();
 
     glEnable(GL_DEPTH_TEST);
     initShaders();
 
     initVBO();
+
 }
 
+void calculateNormals() 
+{
+    int vertexCount = totalPatchCount * samples * samples;
+
+    for (int i = 0; i < vertexCount; i++) {
+
+        glm::vec3 sum(0);
+        int count = triangleIndicesPerVertex[i].size();
+        for(int triIndex : triangleIndicesPerVertex[i]) {
+            // get that triangles normal
+            sum.x = sum.x + triNormals[triIndex].x;
+            sum.y = sum.y + triNormals[triIndex].y;
+            sum.z = sum.z + triNormals[triIndex].z;
+        }
+        sum.x /= count;
+        sum.y /= count;
+        sum.z /= count;
+        //cout << "vertex normal: " << sum.x << "," << sum.y << "," << sum.z << endl;
+        gNormals.push_back(Normal(sum.x, sum.y, sum.z));
+    }
+    //gNormals.push_back(Normal(0.f, 0.f, 1.0f));
+}
+
+void updateNormalsNoAlloc() 
+{
+    int vertexCount = totalPatchCount * samples * samples;
+    glm::vec3 sum(0);
+    for (int i = 0; i < vertexCount; i++) {
+
+        sum.x = sum.y = sum.z = 0.f;
+
+        int count = triangleIndicesPerVertex[i].size();
+        for (int triIndex : triangleIndicesPerVertex[i]) {
+            // get that triangles normal
+            sum.x += triNormals[triIndex].x;
+            sum.y += triNormals[triIndex].y;
+            sum.z += triNormals[triIndex].z;
+        }
+        sum.x /= count;
+        sum.y /= count;
+        sum.z /= count;
+        //cout << "vertex normal: " << sum.x << "," << sum.y << "," << sum.z << endl;
+        gNormals[i].x = sum.x;
+        gNormals[i].y = sum.y;
+        gNormals[i].z = sum.z;
+    }
+}
+void updateTriangleNormals() 
+{
+    glm::vec3 a, b, normal;
+
+    int faceCount = gFaces.size();
+    for (int i = 0; i < faceCount; i++) 
+    {
+        auto inds = gFaces[i].vIndex;
+        a = glm::vec3(
+            gVertices[inds[0]].x - gVertices[inds[1]].x,
+            gVertices[inds[0]].y - gVertices[inds[1]].y,
+            gVertices[inds[0]].z - gVertices[inds[1]].z);
+
+        b = glm::vec3(
+            gVertices[inds[2]].x - gVertices[inds[1]].x,
+            gVertices[inds[2]].y - gVertices[inds[1]].y,
+            gVertices[inds[2]].z - gVertices[inds[1]].z);
+
+        normal.x = a.z * b.y - a.y * b.z;
+        normal.y = a.x * b.z - a.z * b.x;
+        normal.z = a.y * b.x - a.x * b.y;
+        normal = glm::normalize(-normal);
+        //cout << "New normal: " << normal.x << "," << normal.y << "," << normal.z << endl;
+        triNormals[i].x = normal.x;
+        triNormals[i].y = normal.y;
+        triNormals[i].z = normal.z;
+    }
+    
+}
 void drawModel()
 {
 	glBindBuffer(GL_ARRAY_BUFFER, gVertexAttribBuffer);
@@ -715,16 +813,8 @@ void display()
 	float angleRad = (float) (angle / 180.0) * M_PI;
 	
 	// Compute the modeling matrix
-
 	modelingMatrix = glm::translate(glm::mat4(1.0), glm::vec3(-2.0f, 2.0f, -15.0f));
-    
-
-    // animate Y coordinates of some selected Control Points.
-    
-
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-
-    //std::cout << "Time difference = " << std::chrono::duration_cast<std::chrono::seconds>(end - starttime).count() << "[sec]" << std::endl;
 
     float change1 = 0.12f;
     float change2 = 0.07f;
@@ -745,50 +835,38 @@ void display()
 
     float fastChange = change2 * glm::sin((0.25f*sinVal-sinVal2) * 4.f);
 
-
-     //controlPointsZ[4] = controlPointsZCopy[4] + change1Animated;
-     //controlPointsZ[8] = controlPointsZCopy[8]+ change1Animated;
-
-    /*modifyControlPointsZ(2, 0.25f * change1 * (1-sinVal), 4);
-    modifyControlPointsY(0, 0.3f * change1 *sinVal, 4);
-    modifyControlPointsY(3, 0.5f * change2 * sinVal, 4);
-    modifyControlPointsY(0, change1Animated * 0.4f,4);*/
-
     ///more or less working animation
     //modifyControlPointsZ(2, 0.15f * fastChange, 4);
     //modifyControlPointsY(0, 0.4f* change1Animated,4);
     //modifyControlPointsY(3, change2Animated, 4);
     //working
 
-    // for patch 0
-    patchModifyY(3, 0.4f * change1Animated, 4, 0);
-
-    // for patch 1
-    patchModifyY(1,change2Animated, 4, 1);
-    patchModifyY(2, 2.f*change1Animated, 4, 1);
-
-    // for patch 2
-    patchModifyY(3, 2*sinVal4, 4, 2);
-    patchModifyY(0, 2.f * change1Animated, 4, 2);
 
 
-    // for patch 3
-    patchModifyY(1, change2Animated, 4, 3);
-    patchModifyY(2, -3.f * change1Animated, 4, 3);
+    change1Animated *= 8.f;
+    patchModifyZ(1, 4 * change1Animated, 4, 0);
+
+    //// for patch 1
+    //patchModifyZ(1, change2Animated, 4, 1);
+    //patchModifyZ(2, 2.f * change1Animated, 4, 1);
+
+    //// for patch 2
+    //patchModifyZ(3, 2 * sinVal4, 4, 2);
+    //patchModifyZ(0, 2.f * change1Animated, 4, 2);
+
+    //// for patch 3
+    //patchModifyZ(1, change2Animated, 4, 3);
+    //patchModifyZ(2, -3.f * change1Animated, 4, 3);
+
 
     increment = 1.0f / (samples-1);
+    float sampledT = 0.f;
+    float sampledS = 0.f;
     for (int k = 0; k < patchPerAxis; k++)
     {
         for (int p = 0; p < patchPerAxis; p++)
         {
-
-            float sampledT = 0.f;
-            float sampledS = 0.f;
-
             int patchInd = k * patchPerAxis + p;
-            // patch test
-     
-
             //cout << "tOffset for patch: " << patchInd << " is " << tOffset << " sOffset: " << sOffset << endl;
 
             for (int s = 0; s < samples; s++) {
@@ -808,29 +886,12 @@ void display()
         }
     }
 
-    //float sampledT = 0.f;
-    //float sampledS = 0.f;
-    //increment = (float)sMax / samples;
-
-    //for (int s = 0; s < samples; s++) {
-    //    for (int t = 0; t < samples; t++) {
-    //        //glm::vec3 vertex = bezierSurface(s, t);
-
-    //        sampledT = t * increment;
-    //        sampledS = s * increment;
-    //        //cout << "t:" << sampledT << "s:" << sampledS << endl;
-
-    //        gVertices[s * samples + t] = bezierSurface(sampledT, sampledS);
-    //        //gNormals.push_back(Normal(0.f, 0.f, 1.0f));  //normals will change actually.
-    //    }
-    //}
-
+    updateTriangleNormals();
+    updateNormalsNoAlloc(); // update vertex normals.
 
     initVBO();
 
 	// Set the active program and the values of its uniform variables
-
-
 	glUseProgram(gProgram[activeProgramIndex]);
 	glUniformMatrix4fv(projectionMatrixLoc[activeProgramIndex], 1, GL_FALSE, glm::value_ptr(projectionMatrix));
 	glUniformMatrix4fv(viewingMatrixLoc[activeProgramIndex], 1, GL_FALSE, glm::value_ptr(viewingMatrix));
@@ -865,6 +926,19 @@ void patchModifyY(int colIndex, float deltaVal, int increment, int patchInd)
     else {
         for (int i = colIndex; i <= 15; i += increment) {
             patchControlPointsY[patchInd][i] = patchControlPointsYCopy[patchInd][i] + deltaVal;
+        }
+    }
+}
+void patchModifyZ(int colIndex, float val, int increment, int patchInd)
+{
+    if (increment == 1) {
+        for (int i = colIndex; i <= colIndex + 3; i += increment) {
+            patchControlPointsZ[patchInd][i] = val;
+        }
+    }
+    else {
+        for (int i = colIndex; i <= 15; i += increment) {
+            patchControlPointsZ[patchInd][i] = val;
         }
     }
 }
