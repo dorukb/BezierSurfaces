@@ -46,7 +46,7 @@ void main(void)
 	vec3 specularColor = I * ks * pow(max(0, NdotH), 100);
 	vec3 ambientColor = Iamb * ka;
 
-	//fragColor = vec4(diffuseColor + specularColor + ambientColor, 1);
+	fragColor = vec4(diffuseColor + specularColor + ambientColor, 1);
 
-	fragColor = vec4(1.0f,0,0,1.0f);
+	//fragColor = vec4(1.0f,0,0,1.0f);
 }

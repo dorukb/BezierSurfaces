@@ -23,6 +23,6 @@ void main(void)
 	fragWorldNor = inverse(transpose(mat3x3(modelingMatrix))) * inNormal;
 
 	uv = inTexCoord;
-    //gl_Position = projectionMatrix * viewingMatrix * modelingMatrix * vec4(inVertex, 1);
+    gl_Position = projectionMatrix * viewingMatrix * modelingMatrix * vec4(inVertex, 1);
 }
 

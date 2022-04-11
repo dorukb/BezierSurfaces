@@ -12,5 +12,5 @@ void main(void)
 	// value computed by the rasterizer.
 	
 	vec4 kdTex= texture(flagSampler, uv);
-	fragColor = kdTex;
+	fragColor = kdTex * color;
 }

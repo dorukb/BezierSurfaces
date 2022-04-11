@@ -34,34 +34,10 @@ GLint viewingMatrixLoc[2];
 GLint projectionMatrixLoc[2];
 GLint eyePosLoc[2];
 
-GLfloat controlPointsX[16];
-GLfloat controlPointsY[16];
-GLfloat controlPointsZ[16];
-
-
-GLfloat controlPointsYCopy[16];
-GLfloat controlPointsZCopy[16];
-
-vector<GLfloat[16]> patchControlPoints;
-
 glm::mat4 projectionMatrix;
 glm::mat4 viewingMatrix;
 glm::mat4 modelingMatrix;
 glm::vec3 eyePos(0, 0, 0);
-
-int activeProgramIndex = 0;
-int samples = 20;
-
-//int sMax = 3;
-//int tMax = 3;
-float sDiv;
-float tDiv;
-
-int patchPerAxis =2;
-int totalPatchCount = patchPerAxis * patchPerAxis;
-
-float increment;
-std::chrono::steady_clock::time_point starttime;
 
 struct Vertex
 {
@@ -106,168 +82,73 @@ GLuint gVertexAttribBuffer, gIndexBuffer;
 GLint gInVertexLoc, gInNormalLoc;
 int gVertexDataSizeInBytes, gNormalDataSizeInBytes, gTextureDataSizeInBytes;
 
+
+// effectively: use frag2.glsl and vert2.glsl
+int activeProgramIndex = 1;
+
 vector<GLfloat[16]> patchControlPointsX;
 vector<GLfloat[16]> patchControlPointsY;
 vector<GLfloat[16]> patchControlPointsYCopy;
-
 vector<GLfloat[16]> patchControlPointsZ;
 
-// i'th entry: all tri id's in which vertex i appears.
-// can appear in at most 6 triangles.
-//vector<GLint[6]> triangleIndicesPerVertex;
-// init to -1
+// i'th entry: all tri id's of which vertex is a member. (can appear in at most 6 triangles). 6*N*N memory overhead where N = #samples.
 vector<vector<int>> triangleIndicesPerVertex;
 vector<Normal> triNormals;
+std::chrono::steady_clock::time_point starttime;
 
+GLfloat controlPointsX[16];
+GLfloat controlPointsY[16];
+GLfloat controlPointsZ[16];
+
+GLfloat controlPointsYCopy[16];
+GLfloat controlPointsZCopy[16];
+
+vector<GLfloat[16]> patchControlPoints;
+
+// Global working variables.
+int samples = 10; // Should be 10 by default.
+
+int patchPerAxis = 2;
+int totalPatchCount = patchPerAxis * patchPerAxis;
+
+float increment;
+int vertexCount = samples * samples * totalPatchCount;
+int currIndices[3];
+glm::vec3 a, b, normal;
+
+// Theory
 int fact(int n);
 float bernstein3(int i, float t);
 Vertex bezierSurface(float s, float t);
 Vertex patchedBezierSurface(float s, float t, int patchIndex);
 
+// Animation
 void modifyControlPointsY(int colIndex, float deltaVal, int incr);
 void modifyControlPointsZ(int colIndex, float deltaVal, int increment);
 void patchModifyY(int colIndex, float deltaVal, int increment, int patchInd);
 void patchModifyZ(int colIndex, float val, int increment, int patchInd);
 
-void calculateNormals();
+// Graphics.
+void calculateVertexNormals();
 void updateTriangleNormals();
-void updateNormalsNoAlloc();
+void updateVertexNormalsNoAlloc();
+void createControlPoints();
+void createMultiPatchedBezierSurface();
+void createFaces(int patchInd);
+void calculateTriNormal();
+
+// TEST
+void modifyCp(int cpCol, float val, int patchInd);
+
+//void modifyCP5and8inZ(float val, int patchInd);
+void modifyCP6and9inZ(float val, int patchInd);
+void modifyCP7and10inZ(float val, int patchInd);
+
+void anim(int colIndex, float v);
+//TEST
 
 
-bool ParseObj(const string& fileName)
-{
-    fstream myfile;
-
-    // Open the input 
-    myfile.open(fileName.c_str(), std::ios::in);
-
-    if (myfile.is_open())
-    {
-        string curLine;
-
-        while (getline(myfile, curLine))
-        {
-            stringstream str(curLine);
-            GLfloat c1, c2, c3;
-            GLuint index[9];
-            string tmp;
-
-            if (curLine.length() >= 2)
-            {
-                if (curLine[0] == 'v')
-                {
-                    if (curLine[1] == 't') // texture
-                    {
-                        str >> tmp; // consume "vt"
-                        str >> c1 >> c2;
-                        gTextures.push_back(Texture(c1, c2));
-                    }
-                    else if (curLine[1] == 'n') // normal
-                    {
-                        str >> tmp; // consume "vn"
-                        str >> c1 >> c2 >> c3;
-                        gNormals.push_back(Normal(c1, c2, c3));
-                    }
-                    else // vertex
-                    {
-                        str >> tmp; // consume "v"
-                        str >> c1 >> c2 >> c3;
-                        gVertices.push_back(Vertex(c1, c2, c3));
-                    }
-                }
-                else if (curLine[0] == 'f') // face
-                {
-                    str >> tmp; // consume "f"
-					char c;
-					int vIndex[3],  nIndex[3], tIndex[3];
-					str >> vIndex[0]; str >> c >> c; // consume "//"
-					str >> nIndex[0]; 
-					str >> vIndex[1]; str >> c >> c; // consume "//"
-					str >> nIndex[1]; 
-					str >> vIndex[2]; str >> c >> c; // consume "//"
-					str >> nIndex[2]; 
-
-					assert(vIndex[0] == nIndex[0] &&
-						   vIndex[1] == nIndex[1] &&
-						   vIndex[2] == nIndex[2]); // a limitation for now
-
-					// make indices start from 0
-					for (int c = 0; c < 3; ++c)
-					{
-						vIndex[c] -= 1;
-						nIndex[c] -= 1;
-						tIndex[c] -= 1;
-					}
-
-                    gFaces.push_back(Face(vIndex, tIndex, nIndex));
-                }
-                else
-                {
-                    cout << "Ignoring unidentified line in obj file: " << curLine << endl;
-                }
-            }
-
-            //data += curLine;
-            if (!myfile.eof())
-            {
-                //data += "\n";
-            }
-        }
-
-        myfile.close();
-    }
-    else
-    {
-        return false;
-    }
-
-	/*
-	for (int i = 0; i < gVertices.size(); ++i)
-	{
-		Vector3 n;
-
-		for (int j = 0; j < gFaces.size(); ++j)
-		{
-			for (int k = 0; k < 3; ++k)
-			{
-				if (gFaces[j].vIndex[k] == i)
-				{
-					// face j contains vertex i
-					Vector3 a(gVertices[gFaces[j].vIndex[0]].x, 
-							  gVertices[gFaces[j].vIndex[0]].y,
-							  gVertices[gFaces[j].vIndex[0]].z);
-
-					Vector3 b(gVertices[gFaces[j].vIndex[1]].x, 
-							  gVertices[gFaces[j].vIndex[1]].y,
-							  gVertices[gFaces[j].vIndex[1]].z);
-
-					Vector3 c(gVertices[gFaces[j].vIndex[2]].x, 
-							  gVertices[gFaces[j].vIndex[2]].y,
-							  gVertices[gFaces[j].vIndex[2]].z);
-
-					Vector3 ab = b - a;
-					Vector3 ac = c - a;
-					Vector3 normalFromThisFace = (ab.cross(ac)).getNormalized();
-					n += normalFromThisFace;
-				}
-
-			}
-		}
-
-		n.normalize();
-
-		gNormals.push_back(Normal(n.x, n.y, n.z));
-	}
-	*/
-
-	assert(gVertices.size() == gNormals.size());
-
-    return true;
-}
-
-bool ReadDataFromFile(
-    const string& fileName, ///< [in]  Name of the shader file
-    string&       data)     ///< [out] The contents of the file
+bool ReadDataFromFile(const string& fileName,string&data)
 {
     fstream myfile;
 
@@ -503,7 +384,9 @@ void initVBO()
 void init() 
 {
     int width, height, nrChannels;
-    unsigned char* data = stbi_load("metu_flag.jpg", &width, &height, &nrChannels, 0);
+    //unsigned char* data = stbi_load("metu_flag.jpg", &width, &height, &nrChannels, 0);
+    unsigned char* data = stbi_load("kurtbayrak.jpg", &width, &height, &nrChannels, 0);
+
     cout << "Texture W:" << width << " H:" << height << endl;
 
     unsigned int flag;
@@ -512,7 +395,6 @@ void init()
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, flag);
 
-    // set the texture wrapping/filtering options (on the currently bound texture object)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -525,61 +407,41 @@ void init()
     srand(static_cast <unsigned> (time(0)));
 
     // create Control Points
-    patchControlPointsX = vector<GLfloat[16]>(totalPatchCount);
-    patchControlPointsY = vector<GLfloat[16]>(totalPatchCount);
-    patchControlPointsYCopy = vector<GLfloat[16]>(totalPatchCount);
+    createControlPoints();
 
-    patchControlPointsZ = vector<GLfloat[16]>(totalPatchCount);
+    // Create the surface together with vertices and uv and tri normals
+    createMultiPatchedBezierSurface();
 
-    float xMax = 5.0f;
-    float xDiv = xMax / patchPerAxis;
+    // Calculate per vertex normals using Triangle normals and vertex data.
+    calculateVertexNormals();
 
-    float increment = xDiv / 3;
-    for(int k = 0; k < patchPerAxis; k++)
-    {
-        // rows first. Y is same.
-        float yOffset = k * xDiv;
-        for (int l = 0; l < patchPerAxis; l++) 
-        {
-            float xOffset = l * xDiv;
+    starttime = std::chrono::steady_clock::now();
 
-            int cpIndex = k * patchPerAxis + l;
-            cout << "CPs for patch: " << cpIndex << endl;
-            for (int i = 0; i < 4; i++)
-            {
-                for (int j = 0; j < 4; j++) {
+    glEnable(GL_DEPTH_TEST);
+    initShaders();
 
-                    int ind = 4 * i + j;
+    initVBO();
 
-                    patchControlPointsX[cpIndex][ind] =(j * increment) + xOffset;
-                    patchControlPointsY[cpIndex][ind] = -((i * increment) + yOffset);
-                    patchControlPointsYCopy[cpIndex][ind] = -((i * increment) + yOffset);
-                    patchControlPointsZ[cpIndex][ind] = 0.f;
-                    //cout << "Control point: " << patchControlPointsX[cpIndex][ind] << "," << patchControlPointsY[cpIndex][ind] << "," << z << endl;
-                }
-            }
-        }
-    }
+}
+void createMultiPatchedBezierSurface() {
 
     gNormals.clear();
     gVertices.clear();
     gFaces.clear();
     gTextures.clear();
 
-    int vertexCount = samples * samples * totalPatchCount;
+    vertexCount = samples * samples * totalPatchCount;
     triangleIndicesPerVertex = vector<vector<int>>(vertexCount, vector<int>());
 
-    increment = 1.0f / (samples-1);
-    
+    increment = 1.0f / (samples - 1);
+
+
     int vIndex = 0;
-    int faceIndex = 0;
-
-    glm::vec3 a, b, normal;
-
+    int indexOffset = 0;
     float uvPiece = 1.0f / patchPerAxis;
     // if two patches in either direction, each patch gets 0.5, 0.5 sized pieces. + offset value\
 
-    for (int k = 0; k < patchPerAxis; k++) 
+    for (int k = 0; k < patchPerAxis; k++)
     {
         float vOffset = k * uvPiece;
         for (int p = 0; p < patchPerAxis; p++)
@@ -591,129 +453,134 @@ void init()
 
             int patchInd = k * patchPerAxis + p;
             //cout << "tOffset for patch: " << patchInd << " is " << tOffset <<" sOffset: " << sOffset << endl;
-            cout << "UVs patch: " << patchInd << endl;
+            //cout << "UVs patch: " << patchInd << endl;
             for (int s = 0; s < samples; s++) {
-                for (int t = 0; t < samples; t++) {
-                    //glm::vec3 vertex = bezierSurface(s, t);
-
+                for (int t = 0; t < samples; t++)
+                {
                     sampledT = t * increment;
                     sampledS = s * increment;
-                    //cout << "t:" << sampledT << "s:" << sampledS << endl;
 
                     //auto vert = patchedBezierSurface(sampledS, sampledT, patchInd);
                     //cout <<"(t,s):"<< sampledT <<","<< sampledS << " V" <<vIndex<<": " << v.x << "," << v.y <<endl;
                     gVertices.push_back(patchedBezierSurface(sampledS, sampledT, patchInd));
                     vIndex++;
 
-                    //gNormals.push_back(Normal(0.f, 0.f, 1.0f));
                     float u = sampledT * uvPiece + uOffset;
                     float v = sampledS * uvPiece + vOffset;
-                    // TODO TODO TOOD fix! UV creation is mostly wrong.
-                    cout << "U: " << u << " v: " << v << endl;
                     gTextures.push_back(Texture(u, v));
-
                 }
             }
-
-            int vIndex[3], nIndex[3], tIndex[3];
-            int sres = 0;
-            int first, second, last;
-            int res = samples;
-            //int res = 0;
-
-            int indexOffset = patchInd * (samples * samples);
-            //cout << "patch: " << patchInd << " index offset " << indexOffset << endl;
-
-            for (int s = 0; s < res; s++) {
-                for (int t = 0; t < res-1; t++) {
-
-                    //cout << "s: " << s << " t: " << t << endl;
-                    first = t + s * res + indexOffset;
-                    second = first + 1;
-                    last = first + res;
-                    //cout << "Tri ind: " << first << "," << second << "," << last << endl;
-                    if (s < res - 1) {
-                        vIndex[0] = nIndex[0] = tIndex[0] = first;
-                        vIndex[1] = nIndex[1] = tIndex[1] = second;
-                        vIndex[2] = nIndex[2] = tIndex[2] = last;
-                        //cout << first << "," << second << "," << last << endl;
-
-                        //cout << "Size: " << triangleIndicesPerVertex.size() << endl;
-                        triangleIndicesPerVertex[first].push_back(faceIndex);
-                        triangleIndicesPerVertex[second].push_back(faceIndex);
-                        triangleIndicesPerVertex[last].push_back(faceIndex);
-
-                        gFaces.push_back(Face(vIndex, tIndex, nIndex));
-
-                        a = glm::vec3(gVertices[second].x - gVertices[first].x, 
-                            gVertices[second].y - gVertices[first].y, 
-                            gVertices[second].z - gVertices[first].z);
-
-                        b = glm::vec3(gVertices[last].x - gVertices[first].x,
-                            gVertices[last].y - gVertices[first].y,
-                            gVertices[last].z - gVertices[first].z);
-
-                        // Nx = Ay * Bz - Az * By;
-                        //Ny = Az * Bx - Ax * Bz;
-                        //Nz = Ax * By - Ay * Bx;
-                        //glm::cross()
-                        triNormals.push_back(Normal(a.y* b.z - a.z * b.y, a.z* b.x - a.x * b.z, a.x* b.y - a.y * b.x));
-                        faceIndex++;
-                    }
-                    if (s > 0) {
-                        last = second - res;
-
-                        vIndex[0] = nIndex[0] = tIndex[0] = second;
-                        vIndex[1] = nIndex[1] = tIndex[1] = first;
-                        vIndex[2] = nIndex[2] = tIndex[2] = last;
-                        //cout << second << "," << first << "," << last << endl;
-                        gFaces.push_back(Face(vIndex, tIndex, nIndex));
-                        //cout << "Size: " << triangleIndicesPerVertex.size() << endl;
-
-                        triangleIndicesPerVertex[first].push_back(faceIndex);
-                        triangleIndicesPerVertex[second].push_back(faceIndex);
-                        triangleIndicesPerVertex[last].push_back(faceIndex);
-
-
-                        a = glm::vec3(gVertices[first].x - gVertices[second].x,
-                            gVertices[first].y - gVertices[second].y,
-                            gVertices[first].z - gVertices[second].z);
-
-                        b = glm::vec3(gVertices[last].x - gVertices[second].x,
-                            gVertices[last].y - gVertices[second].y,
-                            gVertices[last].z - gVertices[second].z);
-
-                        // Nx = Ay * Bz - Az * By;
-                        //Ny = Az * Bx - Ax * Bz;
-                        //Nz = Ax * By - Ay * Bx;
-                        //glm::cross()
-                        normal.x = a.y * b.z - a.z * b.y;
-                        normal.y = a.z * b.x - a.x * b.z;
-                        normal.z = a.x * b.y - a.y * b.x;
-                        normal = glm::normalize(-normal);
-                        //cout << "normal: " << normal.x << "," << normal.y << "," << normal.z << endl;
-                        triNormals.push_back(Normal(normal.x, normal.y, normal.z));
-
-                        faceIndex++;
-                    }
-                }
-            }
-
+            indexOffset = patchInd * (samples * samples);
+            createFaces(indexOffset);
         }
     }
-
-    calculateNormals();
-
-    starttime = std::chrono::steady_clock::now();
-
-    glEnable(GL_DEPTH_TEST);
-    initShaders();
-
-    initVBO();
-
 }
 
-void calculateNormals() 
+void createFaces(int indexOffset)
+{
+    int faceIndex = 0;
+
+    int vIndex[3], nIndex[3], tIndex[3];
+    int sres = 0;
+    int first, second, last;
+    int res = samples;
+
+    //cout << "patch: " << patchInd << " index offset " << indexOffset << endl;
+    for (int s = 0; s < res; s++) {
+        for (int t = 0; t < res - 1; t++) {
+            first = t + s * res + indexOffset;
+            second = first + 1;
+            last = first + res;
+            //cout << "Tri ind: " << first << "," << second << "," << last << endl;
+            if (s < res - 1) {
+                currIndices[0] = vIndex[0] = nIndex[0] = tIndex[0] = first;
+                currIndices[1] = vIndex[1] = nIndex[1] = tIndex[1] = second;
+                currIndices[2] = vIndex[2] = nIndex[2] = tIndex[2] = last;
+                //cout << first << "," << second << "," << last << endl;
+                triangleIndicesPerVertex[first].push_back(faceIndex);
+                triangleIndicesPerVertex[second].push_back(faceIndex);
+                triangleIndicesPerVertex[last].push_back(faceIndex);    
+
+                gFaces.push_back(Face(vIndex, tIndex, nIndex));
+                faceIndex++;
+                calculateTriNormal();
+            }
+            if (s > 0) {
+                last = second - res;
+                currIndices[0] = vIndex[0] = nIndex[0] = tIndex[0] = second;
+                currIndices[1] = vIndex[1] = nIndex[1] = tIndex[1] = first;
+                currIndices[2] = vIndex[2] = nIndex[2] = tIndex[2] = last;
+                //cout << second << "," << first << "," << last << endl;
+                triangleIndicesPerVertex[first].push_back(faceIndex);
+                triangleIndicesPerVertex[second].push_back(faceIndex);
+                triangleIndicesPerVertex[last].push_back(faceIndex);
+
+                gFaces.push_back(Face(vIndex, tIndex, nIndex));
+                faceIndex++;
+                calculateTriNormal();
+            }
+        }
+    }
+}
+void calculateTriNormal() 
+{
+    int first = currIndices[0];
+    int second = currIndices[1];
+    int last = currIndices[2];
+
+    a = glm::vec3(gVertices[first].x - gVertices[second].x,
+        gVertices[first].y - gVertices[second].y,
+        gVertices[first].z - gVertices[second].z);
+
+    b = glm::vec3(gVertices[last].x - gVertices[second].x,
+        gVertices[last].y - gVertices[second].y,
+        gVertices[last].z - gVertices[second].z);
+
+    // Nx = Ay * Bz - Az * By;    //Ny = Az * Bx - Ax * Bz;    //Nz = Ax * By - Ay * Bx;
+    normal.x = a.y * b.z - a.z * b.y;
+    normal.y = a.z * b.x - a.x * b.z;
+    normal.z = a.x * b.y - a.y * b.x;
+    normal = glm::normalize(-normal);
+    //cout << "normal: " << normal.x << "," << normal.y << "," << normal.z << endl;
+    triNormals.push_back(Normal(normal.x, normal.y, normal.z));
+}
+
+void createControlPoints() {
+    // create Control Points
+    patchControlPointsX = vector<GLfloat[16]>(totalPatchCount);
+    patchControlPointsY = vector<GLfloat[16]>(totalPatchCount);
+    //patchControlPointsYCopy = vector<GLfloat[16]>(totalPatchCount);
+    patchControlPointsZ = vector<GLfloat[16]>(totalPatchCount);
+
+    float xMax = 5.0f;
+    float xDiv = xMax / patchPerAxis;
+
+    float increment = xDiv / 3;
+    for (int k = 0; k < patchPerAxis; k++)
+    {
+        // rows first. Y is same.
+        float yOffset = k * xDiv;
+        for (int l = 0; l < patchPerAxis; l++)
+        {
+            float xOffset = l * xDiv;
+            int cpIndex = k * patchPerAxis + l;
+            cout << "CPs for patch: " << cpIndex << endl;
+            for (int i = 0; i < 4; i++)
+            {
+                for (int j = 0; j < 4; j++) {
+
+                    int ind = 4 * i + j;
+
+                    patchControlPointsX[cpIndex][ind] = (j * increment) + xOffset;
+                    patchControlPointsY[cpIndex][ind] = -((i * increment) + yOffset);
+                    patchControlPointsZ[cpIndex][ind] = 0.f;
+                    cout << "Control point: " << patchControlPointsX[cpIndex][ind] << "," << patchControlPointsY[cpIndex][ind] << endl;
+                }
+            }
+        }
+    }
+}
+void calculateVertexNormals() 
 {
     int vertexCount = totalPatchCount * samples * samples;
 
@@ -736,7 +603,7 @@ void calculateNormals()
     //gNormals.push_back(Normal(0.f, 0.f, 1.0f));
 }
 
-void updateNormalsNoAlloc() 
+void updateVertexNormalsNoAlloc() 
 {
     int vertexCount = totalPatchCount * samples * samples;
     glm::vec3 sum(0);
@@ -813,7 +680,12 @@ void display()
 	float angleRad = (float) (angle / 180.0) * M_PI;
 	
 	// Compute the modeling matrix
-	modelingMatrix = glm::translate(glm::mat4(1.0), glm::vec3(-2.0f, 2.0f, -15.0f));
+    modelingMatrix = glm::mat4(1.0);
+
+	glm::mat4 matT = glm::translate(glm::mat4(1.0), glm::vec3(-2.0f, 2.0f, -15.0f));
+    glm::mat4 matRx = glm::rotate<float>(glm::mat4(1.0), (-15. / 180.) * M_PI, glm::vec3(1.0, 0.0, 0.0));
+    modelingMatrix = matT* matRx * modelingMatrix;
+
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 
     float change1 = 0.12f;
@@ -842,21 +714,59 @@ void display()
     //working
 
 
+    float try0 = change1 * sinVal * 4.f;
 
     change1Animated *= 8.f;
-    patchModifyZ(1, 4 * change1Animated, 4, 0);
+    //patchModifyZ(1, 4 * change1Animated, 4, 0);
 
-    //// for patch 1
-    //patchModifyZ(1, change2Animated, 4, 1);
-    //patchModifyZ(2, 2.f * change1Animated, 4, 1);
+    //if (totalPatchCount > 1) {
+    //    // for patch index 1
+    //    patchModifyZ(1, change2Animated, 4, 1);
+    //    patchModifyZ(2, 2.f * change1Animated, 4, 1);
+    //}
 
-    //// for patch 2
-    //patchModifyZ(3, 2 * sinVal4, 4, 2);
-    //patchModifyZ(0, 2.f * change1Animated, 4, 2);
+    //if (totalPatchCount > 2) {
 
-    //// for patch 3
-    //patchModifyZ(1, change2Animated, 4, 3);
-    //patchModifyZ(2, -3.f * change1Animated, 4, 3);
+    //    // for patch 2
+    //    patchModifyZ(3, 2 * sinVal4, 4, 2);
+    //    patchModifyZ(0, 2.f * change1Animated, 4, 2);
+    //}
+
+    //if (totalPatchCount > 3) {
+    //    // for patch 3
+    //    patchModifyZ(1, change2Animated, 4, 3);
+    //    patchModifyZ(2, -3.f * change1Animated, 4, 3);
+    //}
+
+    // Have first CP of first patch and (12th CP of last Row's first patch) slightly left positioned starting points!
+    //patchControlPointsX[0][0] = -0.25f;
+    //patchControlPointsX[totalPatchCount-patchPerAxis][12] = -0.25f;
+
+    //for (int i = 0; i < patchControlPointsZ.size(); i++) {
+    //    //traverse patches
+    //    int colInd = 1;
+    //    for (int j = colInd; j < 16; j += 4) {
+
+    //        patchControlPointsZ[i][j] = try0;
+    //    }
+
+    //    colInd = 2;
+    //    for (int j = colInd; j < 16; j += 4) {
+
+    //        patchControlPointsZ[i][j] = try0 *-3.f;
+    //    }
+    //}
+    float val = try0 * 3.0f;
+    anim(0, val);
+    anim(1, val);
+    anim(2, val);
+    anim(3, val);
+    
+    //modifyCp(1,try0, 0);
+    //modifyCp(2, try0*4.f, 0);
+
+    //modifyCP6and9inZ(change1Animated, 1);
+    //modifyCP7and10inZ(change1Animated, 2);
 
 
     increment = 1.0f / (samples-1);
@@ -887,7 +797,7 @@ void display()
     }
 
     updateTriangleNormals();
-    updateNormalsNoAlloc(); // update vertex normals.
+    updateVertexNormalsNoAlloc(); // update vertex normals.
 
     initVBO();
 
@@ -943,6 +853,116 @@ void patchModifyZ(int colIndex, float val, int increment, int patchInd)
     }
 }
 
+void anim(int colIndex, float val) {
+    //int colIndex = 1;
+
+    int col1, col2;
+    if (colIndex == 0) {
+        col1 = 0;
+        col2 = 3;
+    }
+    else if (colIndex == 1) {
+        col1 = 1;
+        col2 = 2;
+    }
+    else if (colIndex == 2) {
+        col1 = 2;
+        col2 = 1;
+    }
+    else if (colIndex == 3) {
+        col1 = 3;
+        col2 = 0;
+    }
+
+    for (int i = 0; i < patchPerAxis; i++)
+    {
+        for (int j = 0; j < patchPerAxis; j++)
+        {
+            int patchIndex = i * patchPerAxis + j;
+            if (col1 == 0 && patchIndex % patchPerAxis == 0) continue;
+
+            if (j % 2 == 0) {
+                for (int j = col1; j < 16; j += 4) {
+
+                    patchControlPointsZ[patchIndex][j] = val;
+                }
+            }
+            else {
+                if (col1 == 0 || col1 == 3) 
+                {
+                    for (int j = col2; j < 16; j += 4) {
+
+                        patchControlPointsZ[patchIndex][j] = val;
+                    }
+                }
+                else {
+                    for (int j = col2; j < 16; j += 4) {
+
+                        patchControlPointsZ[patchIndex][j] = -val;
+                    }
+                }
+                
+            }
+        }
+    }
+}
+void modifyCp(int cpCol, float val, int patchInd) 
+{
+    int rightPatch = patchInd + 1;
+    int leftPatch = patchInd - 1;
+    int patchBelow = patchInd + patchPerAxis;
+    int patchAbove = patchInd - patchPerAxis;
+
+    if (cpCol == 1) 
+    {
+        patchControlPointsZ[patchInd][1] = val;
+        patchControlPointsZ[patchInd][5] = val;
+        patchControlPointsZ[patchInd][9] = val;
+        patchControlPointsZ[patchInd][13] = val;
+        if (patchBelow < totalPatchCount) {
+            // one below patch exists.
+            patchControlPointsZ[patchBelow][1] = val;
+            patchControlPointsZ[patchBelow][5] = -val;
+            patchControlPointsZ[patchBelow][9] = -val;
+            patchControlPointsZ[patchBelow][13] = -val;
+        }
+        // also check for left & top patches?
+    }
+    else if (cpCol == 2) 
+    {
+        patchControlPointsZ[patchInd][2] = val;
+        patchControlPointsZ[patchInd][6] = val;
+        patchControlPointsZ[patchInd][10] = val;
+        patchControlPointsZ[patchInd][14] = val;
+
+        if (rightPatch < totalPatchCount && ((patchInd+1)%patchPerAxis != 0))
+        {
+            // if not the last patch, and not a patch in the last column.
+
+            // fix right neighbor patch cp's
+            patchControlPointsZ[rightPatch][1] = -val;
+            patchControlPointsZ[rightPatch][5] = -val;
+            patchControlPointsZ[rightPatch][9] = -val;
+            patchControlPointsZ[rightPatch][13] = -val;
+        }
+        if (patchBelow < totalPatchCount) {
+            // one below patch exists.
+            patchControlPointsZ[patchBelow][2] = val;
+            patchControlPointsZ[patchBelow][6] = -val;
+            patchControlPointsZ[patchBelow][10] = -val;
+            patchControlPointsZ[patchBelow][14] = -val;
+
+        }
+    }
+}
+void modifyCP6and9inZ(float val, int patchInd) {
+    patchControlPointsZ[patchInd][6] = val;
+    patchControlPointsZ[patchInd][9] = val;
+}
+void modifyCP7and10inZ(float val, int patchInd) {
+    patchControlPointsZ[patchInd][7] = val;
+    patchControlPointsZ[patchInd][10] = val;
+}
 void modifyControlPointsZ(int colIndex, float deltaVal, int increment)
 {
     if (increment == 1) {
@@ -1040,19 +1060,68 @@ void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
     {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
-    else if (key == GLFW_KEY_G && action == GLFW_PRESS)
+    else if (key == GLFW_KEY_W && action == GLFW_PRESS)
     {
-        //glShadeModel(GL_SMOOTH);
-        activeProgramIndex = 0;
+        // Tapping W button should increase SAMPLES value by 1. There is no upper value limit.
+        samples++;
+        vertexCount = samples * samples * totalPatchCount;
+        createMultiPatchedBezierSurface();
+        calculateVertexNormals();
+
+        initVBO();
     }
-    else if (key == GLFW_KEY_P && action == GLFW_PRESS)
+    else if (key == GLFW_KEY_S && action == GLFW_PRESS)
     {
-        //glShadeModel(GL_SMOOTH);
-        activeProgramIndex = 1;
+        //• Tapping S button should decrease SAMPLES value by 1, down to a minimum value of 2
+        if (samples > 3) {
+            samples--;
+            // what should change now that samples has changed?
+            // Everything except Control Point calculation.
+            vertexCount = samples * samples * totalPatchCount;
+
+            createMultiPatchedBezierSurface();
+            calculateVertexNormals();
+
+            initVBO();
+        }
+
     }
-    else if (key == GLFW_KEY_F && action == GLFW_PRESS)
+    else if (key == GLFW_KEY_E && action == GLFW_PRESS)
     {
-        //glShadeModel(GL_FLAT);
+        //Tapping E button should increase PATCH PER AXIS value by 1. There is no upper value limit.
+        patchPerAxis++;
+        totalPatchCount = patchPerAxis * patchPerAxis;
+
+        // create Control Points
+        createControlPoints();
+
+        // Create the surface together with vertices and uv and tri normals
+        createMultiPatchedBezierSurface();
+
+        // Calculate per vertex normals using Triangle normals and vertex data.
+        calculateVertexNormals();
+
+        initVBO();
+    }
+    else if (key == GLFW_KEY_D && action == GLFW_PRESS)
+    {
+        //Tapping D button should decrease PATCH PER AXIS value by 1, down to a minimum value of 1
+        if (patchPerAxis > 1) 
+        {
+            patchPerAxis--;
+            totalPatchCount = patchPerAxis * patchPerAxis;
+
+            // create Control Points
+            createControlPoints();
+
+            // Create the surface together with vertices and uv and tri normals
+            createMultiPatchedBezierSurface();
+
+            // Calculate per vertex normals using Triangle normals and vertex data.
+            calculateVertexNormals();
+
+            initVBO();
+        }
     }
 }
 
