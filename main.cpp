@@ -108,7 +108,7 @@ vector<GLfloat[16]> patchControlPoints;
 // Global working variables.
 int samples = 10; // Should be 10 by default.
 
-int patchPerAxis = 2;
+int patchPerAxis = 1;
 int totalPatchCount = patchPerAxis * patchPerAxis;
 
 float increment;
@@ -384,8 +384,13 @@ void initVBO()
 void init() 
 {
     int width, height, nrChannels;
-    unsigned char* data = stbi_load("metu_flag.jpg", &width, &height, &nrChannels, 0);
-    //unsigned char* data = stbi_load("kurtbayrak.jpg", &width, &height, &nrChannels, 0);
+    //unsigned char* data = stbi_load("metu_flag.jpg", &width, &height, &nrChannels, 0);
+    //unsigned char* data = stbi_load("kurtbayrak.jpg", &width, &height, &nrChannels, 0);  
+
+    //unsigned char* data = stbi_load("w3.jpg", &width, &height, &nrChannels, 0);
+    //unsigned char* data = stbi_load("nilf.jpeg", &width, &height, &nrChannels, STBI_rgb_alpha);
+
+    unsigned char* data = stbi_load("w3wp.jpg", &width, &height, &nrChannels, 0);
 
     cout << "Texture W:" << width << " H:" << height << endl;
 
@@ -401,6 +406,7 @@ void init()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    //glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
     glGenerateMipmap(GL_TEXTURE_2D);
     stbi_image_free(data);
 
@@ -579,6 +585,10 @@ void createControlPoints() {
             }
         }
     }
+
+    patchControlPointsY[0][0] = 0.35f;
+    patchControlPointsY[totalPatchCount - patchPerAxis][12] -= 0.35f;
+
 }
 void calculateVertexNormals() 
 {
@@ -938,7 +948,7 @@ void display()
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 
     float change1 = 0.12f;
-    float change2 = 0.07f;
+    float change2 = 0.37f;
 
     float sinFactor = 0.25f;
     long long msCount = std::chrono::duration_cast<std::chrono::milliseconds>(end - starttime).count();
@@ -954,24 +964,32 @@ void display()
     float change2Animated = change2 * sinVal4;
     float sinVal3 = glm::sin((sinVal+sinVal2) * 0.6f);
 
-    float fastChange = change2 * glm::sin((0.25f*sinVal-sinVal2) * 4.f);
+    float fastChange = change2 * glm::sin((0.25f*sinVal-sinVal2) * 4.f);    
+    //float fastChange = change2 * glm::sin((1- sinVal2) * 8.f);
 
-    ///more or less working animation
-    //modifyControlPointsZ(2, 0.15f * fastChange, 4);
-    //modifyControlPointsY(0, 0.4f* change1Animated,4);
-    //modifyControlPointsY(3, change2Animated, 4);
-    //working
-
+    // edit
+    fastChange = change2Animated * fastChange;
+    //edit
 
     float try0 = change1 * sinVal * 4.f;
 
-    change1Animated *= 8.f;
+    change1Animated *= 3.f;
 
     float val = try0 * 3.0f;
     anim(1, val);
 
+    //float endchange = fastChange * 15.f;
     float endchange = fastChange * 15.f;
+
     float smallChange = sinVal3 *0.5f + 4.5;
+
+
+    // Have first CP of first patch and (12th CP of last Row's first patch) slightly left positioned starting points!
+    patchControlPointsX[0][0] = -0.25f;
+
+    patchControlPointsX[totalPatchCount-patchPerAxis][12] = -0.25f;
+    //patchControlPointsY[totalPatchCount - patchPerAxis][12] = 0.25f;
+
 
     for (int i = 0; i < patchPerAxis; i++) {
         int pIndex = (i + 1) * patchPerAxis -1; 
@@ -981,6 +999,14 @@ void display()
         patchControlPointsZ[pIndex][start+8] = endchange;
         patchControlPointsZ[pIndex][start+12] = endchange;
 
+        //edit
+
+        start = 3;
+        patchControlPointsZ[pIndex][start] = change1Animated;
+        patchControlPointsZ[pIndex][start + 4] = change1Animated;
+        patchControlPointsZ[pIndex][start + 8] = change1Animated;
+        patchControlPointsZ[pIndex][start + 12] = change1Animated;
+        //edit
         start = 3;
         patchControlPointsX[pIndex][start] = smallChange;
         patchControlPointsX[pIndex][start + 4] = smallChange;
@@ -995,30 +1021,6 @@ void display()
              patchControlPointsX[pIndex][15] = smallChange - (0.6f * (1.0f/patchPerAxis));
         }
     }
-    //for (int i = 0; i < totalPatchCount; i++) 
-    //{
-    //    for (int j = 0; j < 16; j++) {
-
-    //        if (j % 2 == 0) {
-    //            patchControlPointsZ[i][j] = val;
-    //        }
-    //        else {
-
-    //            patchControlPointsZ[i][j] = - val;
-    //        }
-    //    }
-    //}
-  
-
-    //anim(1, val);
-    //anim(2, val);
-    //anim(3, val);
-    
-    //modifyCp(1,try0, 0);
-    //modifyCp(2, try0*4.f, 0);
-
-    //modifyCP6and9inZ(change1Animated, 1);
-    //modifyCP7and10inZ(change1Animated, 2);
 
 
     increment = 1.0f / (samples-1);
@@ -1136,6 +1138,7 @@ void anim(int colIndex, float val) {
             if (j % 2 == 0) {
                 for (int j = col1; j < 16; j += 4) {
 
+                    //patchControlPointsZ[patchIndex][j] = val;
                     patchControlPointsZ[patchIndex][j] = val;
                 }
             }

@@ -6,11 +6,15 @@
 // However, we will not change them and therefore we define them 
 // here for simplicity.
 
-vec3 I = vec3(1, 1, 1);          // point light intensity
-vec3 Iamb = vec3(0.8, 0.8, 0.8); // ambient light intensity
+vec3 I = vec3(1,1,1);          // point light intensity
+vec3 Iamb = vec3(0.2, 0.7, 0.8); // ambient light intensity
 vec3 kd = vec3(1, 0.2, 0.2);     // diffuse reflectance coefficient
-vec3 ka = vec3(0.3, 0.3, 0.3);   // ambient reflectance coefficient
-vec3 ks = vec3(0.8, 0.8, 0.8);   // specular reflectance coefficient
+
+
+//vec3 ka = vec3(0.3, 0.3, 0.3);   // ambient reflectance coefficient
+
+vec3 ka = vec3(0.1, 0.1, 0.1);   // ambient reflectance coefficient
+vec3 ks = vec3(0.6, 0.5, 0.6);   // specular reflectance coefficient
 vec3 lightPos = vec3(5, 5, 5);   // light position in world coordinates
 
 uniform vec3 eyePos;
