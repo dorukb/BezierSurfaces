@@ -384,8 +384,8 @@ void initVBO()
 void init() 
 {
     int width, height, nrChannels;
-    //unsigned char* data = stbi_load("metu_flag.jpg", &width, &height, &nrChannels, 0);
-    unsigned char* data = stbi_load("kurtbayrak.jpg", &width, &height, &nrChannels, 0);
+    unsigned char* data = stbi_load("metu_flag.jpg", &width, &height, &nrChannels, 0);
+    //unsigned char* data = stbi_load("kurtbayrak.jpg", &width, &height, &nrChannels, 0);
 
     cout << "Texture W:" << width << " H:" << height << endl;
 
@@ -564,7 +564,7 @@ void createControlPoints() {
         {
             float xOffset = l * xDiv;
             int cpIndex = k * patchPerAxis + l;
-            cout << "CPs for patch: " << cpIndex << endl;
+            //cout << "CPs for patch: " << cpIndex << endl;
             for (int i = 0; i < 4; i++)
             {
                 for (int j = 0; j < 4; j++) {
@@ -574,7 +574,7 @@ void createControlPoints() {
                     patchControlPointsX[cpIndex][ind] = (j * increment) + xOffset;
                     patchControlPointsY[cpIndex][ind] = -((i * increment) + yOffset);
                     patchControlPointsZ[cpIndex][ind] = 0.f;
-                    cout << "Control point: " << patchControlPointsX[cpIndex][ind] << "," << patchControlPointsY[cpIndex][ind] << endl;
+                    //cout << "Control point: " << patchControlPointsX[cpIndex][ind] << "," << patchControlPointsY[cpIndex][ind] << endl;
                 }
             }
         }
@@ -607,10 +607,10 @@ void updateVertexNormalsNoAlloc()
 {
     int vertexCount = totalPatchCount * samples * samples;
     glm::vec3 sum(0);
-    for (int i = 0; i < vertexCount; i++) {
+    for (int i = 0; i < vertexCount; i++) 
+    {
 
         sum.x = sum.y = sum.z = 0.f;
-
         int count = triangleIndicesPerVertex[i].size();
         for (int triIndex : triangleIndicesPerVertex[i]) {
             // get that triangles normal
@@ -626,6 +626,255 @@ void updateVertexNormalsNoAlloc()
         gNormals[i].y = sum.y;
         gNormals[i].z = sum.z;
     }
+
+
+    // Recalculate/fix vertex normals along patch Borders.
+    int currPatchOffset = 0;
+    int otherPatchOffset = 0;
+    int rightPatchOffset = 0;
+
+    int lastRowStart = samples * (samples - 1);
+    int vertexCountPerPatch = samples * samples;
+
+    Normal blendedNormal(0, 0, 0);
+     //there are patchPerAxis rows. skip last one.
+    for (int row = 0; row < patchPerAxis; row++) {
+        // for all intermediate rows.
+        
+        for (int col = 0; col < patchPerAxis; col++) {
+            // for every patch in that row?
+            int currPatchInd = row * patchPerAxis + col;
+            currPatchOffset = currPatchInd * vertexCountPerPatch;
+
+            int patchBelow = currPatchInd + patchPerAxis;
+            otherPatchOffset = patchBelow * vertexCountPerPatch;
+
+            int patchRight = currPatchInd + 1;
+            rightPatchOffset = currPatchOffset + vertexCountPerPatch;
+
+            // now find the last-row vertices of currPatch
+            // and first-row vertices of patchBelow
+            // blend their normals together.
+
+            if (row != patchPerAxis - 1) {
+                //cout << "CurrPatchOffset: " << currPatchOffset << " patchbelowoffset: " << otherPatchOffset << " rightpatchoffset: " << rightPatchOffset << endl;
+                for (int i = 0; i < samples; i++)
+                {
+                    int currNormalInd = currPatchOffset + lastRowStart + i;
+                    int otherNormalInd = otherPatchOffset + i;
+
+                    //cout << "currNormalInd: " << currNormalInd << " otherNormInd: " << otherNormalInd << " vCount: " << vertexCount << endl;
+                    // exactly samples many vertices in a row.
+                    auto currV = gNormals[currNormalInd];
+                    //cout << "duplicate vertices Curr: " << currV.x << "," << currV.y << "," << currV.z << endl;
+
+                    auto other = gNormals[otherNormalInd];
+                    //cout << " other: " << other.x << "," << other.y << "," << other.z << endl;
+
+                    blendedNormal.x = (currV.x + other.x) / 2.f;
+                    blendedNormal.y = (currV.y + other.y) / 2.f;
+                    blendedNormal.z = (currV.z + other.z) / 2.f;
+
+                    //test
+                    /*blendedNormal.x = 0;
+                    blendedNormal.y = 0;
+                    blendedNormal.z = 1.0f;*/
+                    //test
+
+                    gNormals[currNormalInd].x = blendedNormal.x;
+                    gNormals[currNormalInd].y = blendedNormal.y;
+                    gNormals[currNormalInd].z = blendedNormal.z;
+
+                    gNormals[otherNormalInd].x = blendedNormal.x;
+                    gNormals[otherNormalInd].y = blendedNormal.y;
+                    gNormals[otherNormalInd].z = blendedNormal.z;
+                }
+            }
+            
+            if (col != patchPerAxis - 1) {
+                // except the last column, fix the column/vertical edges.
+
+                for (int i = 0; i < samples; i++)
+                {
+                    int currNormalInd = currPatchOffset + ((i+1) * samples)-1;
+                    int otherNormalInd = rightPatchOffset + (i * samples);
+                    //cout << "COL: currNormalInd: " << currNormalInd << " otherNormInd: " << otherNormalInd << " vCount: " << vertexCount << endl;
+
+                    // access vertices in the last COLUMN of the current
+                    auto currV = gNormals[currNormalInd];
+                    //cout << "Curr norm: " << currV.x << "," << currV.y << "," << currV.z << endl;
+
+                    auto other = gNormals[otherNormalInd];
+                    //cout << " others norm: " << other.x << "," << other.y << "," << other.z << endl;
+
+                    //cout << " blended norm: " << blendedNormal.x << "," << blendedNormal.y << "," << blendedNormal.z << endl;
+
+                    blendedNormal.x = (currV.x + other.x) / 2.f;
+                    blendedNormal.y = (currV.y + other.y) / 2.f;
+                    blendedNormal.z = (currV.z + other.z) / 2.f;
+                    //test
+                 /*   blendedNormal.x = 0;
+                    blendedNormal.y = 0;
+                    blendedNormal.z = 1.0f;*/
+                    //test
+                    gNormals[currNormalInd].x = blendedNormal.x;
+                    gNormals[currNormalInd].y = blendedNormal.y;
+                    gNormals[currNormalInd].z = blendedNormal.z;
+
+                    gNormals[otherNormalInd].x = blendedNormal.x;
+                    gNormals[otherNormalInd].y = blendedNormal.y;
+                    gNormals[otherNormalInd].z = blendedNormal.z;
+                }
+            }
+           
+        }
+    }
+
+    if (totalPatchCount == 1) {
+        // no artifact.
+    }
+    else if (totalPatchCount == 4) {
+        int vPerPatch = samples * samples;
+        int v1Ind = vPerPatch - 1;
+        int v2Ind = (2 * vPerPatch) - samples;
+        int v3ind = (2 * vPerPatch) - 1 + samples;
+        int v4ind = (3 * vPerPatch);
+
+        GLfloat x = (gNormals[v1Ind].x + gNormals[v2Ind].x + gNormals[v3ind].x + gNormals[v4ind].x) / 4.0f;
+        GLfloat y = (gNormals[v1Ind].y + gNormals[v2Ind].y + gNormals[v3ind].y + gNormals[v4ind].y) / 4.0f;
+        GLfloat z = (gNormals[v1Ind].z + gNormals[v2Ind].z + gNormals[v3ind].z + gNormals[v4ind].z) / 4.0f;
+
+        gNormals[v1Ind].x = gNormals[v2Ind].x = gNormals[v3ind].x = gNormals[v4ind].x = x;
+        gNormals[v1Ind].y = gNormals[v2Ind].y = gNormals[v3ind].y = gNormals[v4ind].y = y;
+        gNormals[v1Ind].z = gNormals[v2Ind].z = gNormals[v3ind].z = gNormals[v4ind].z = z;
+    }
+    else 
+    {
+        int leftPatchOffset = 0;
+        for (int row = 1; row < patchPerAxis - 1; row++) {
+            for (int col = 1; col < patchPerAxis - 1; col++) {
+                // for every patch in that row?
+                int currPatchInd = row * patchPerAxis + col;
+                currPatchOffset = currPatchInd * vertexCountPerPatch;
+
+                int patchBelow = currPatchInd + patchPerAxis;
+                if (patchBelow < totalPatchCount) {
+                    // has below neighbor
+                    otherPatchOffset = patchBelow * vertexCountPerPatch;
+
+                    int patchRight = currPatchInd + 1;
+                    if (patchRight < totalPatchCount) {
+                        // has right neighbor
+                        int patchLeft = currPatchInd - 1;
+                        if (patchLeft < totalPatchCount) {
+
+                            leftPatchOffset = currPatchOffset - vertexCountPerPatch;
+                            int patchAbove = currPatchInd - patchPerAxis;
+
+                            int patchTopLeft = patchAbove - 1;
+                            int patchTopRight = patchAbove + 1;
+
+                            int patchBottomLeft = patchBelow - 1;
+                            int patchBottomRight = patchBelow + 1;
+
+                            //cout << "pInd: " << currPatchInd << " has all 8 neighbors." << endl;
+
+                            // Fix Top-Left vertex of current. 4 patches contribute.
+                            // TopLeft, above, bottomLeft, current
+                            int currNormalInd = currPatchOffset; //v0id
+                            int topleft = patchTopLeft * vertexCountPerPatch + vertexCountPerPatch - 1;
+                            int above = (patchAbove + 1)* vertexCountPerPatch - samples;
+                            int left = patchLeft * vertexCountPerPatch + samples - 1;
+                            //cout << "tl:" << topleft << " above:" << above << " bl:" << bottomleft << endl;
+
+                            blendedNormal.x = (gNormals[currNormalInd].x + gNormals[topleft].x
+                                             + gNormals[above].x + gNormals[left].x ) / 4.f;
+
+                            blendedNormal.y = (gNormals[currNormalInd].y + gNormals[topleft].y
+                                + gNormals[above].y + gNormals[left].y) / 4.f;
+
+                            blendedNormal.z = (gNormals[currNormalInd].z + gNormals[topleft].z
+                                + gNormals[above].z + gNormals[left].z) / 4.f;
+                   
+                            gNormals[currNormalInd].x = gNormals[topleft].x = gNormals[above].x = gNormals[left].x = blendedNormal.x;
+                            gNormals[currNormalInd].y = gNormals[topleft].y = gNormals[above].y = gNormals[left].y = blendedNormal.y;
+                            gNormals[currNormalInd].z = gNormals[topleft].z = gNormals[above].z = gNormals[left].z = blendedNormal.z;
+
+
+                            // Fix Top-Right vertex of current patch.
+                            // contributing patches: above, top right, right, current
+                            currNormalInd = currPatchOffset + samples - 1; //v0id
+                            int topRight = (patchTopRight + 1) * vertexCountPerPatch - samples;
+                            above = patchAbove*vertexCountPerPatch + vertexCountPerPatch - 1;
+                            int right = patchRight * vertexCountPerPatch;
+                            //cout << "tl:" << topleft << " above:" << above << " bl:" << bottomleft << endl;
+
+                            blendedNormal.x = (gNormals[currNormalInd].x + gNormals[topRight].x
+                                + gNormals[above].x + gNormals[right].x) / 4.f;
+
+                            blendedNormal.y = (gNormals[currNormalInd].y + gNormals[topRight].y
+                                + gNormals[above].y + gNormals[right].y) / 4.f;
+
+                            blendedNormal.z = (gNormals[currNormalInd].z + gNormals[topRight].z
+                                + gNormals[above].z + gNormals[right].z) / 4.f;
+
+                            gNormals[currNormalInd].x = gNormals[topRight].x = gNormals[above].x = gNormals[right].x = blendedNormal.x;
+                            gNormals[currNormalInd].y = gNormals[topRight].y = gNormals[above].y = gNormals[right].y = blendedNormal.y;
+                            gNormals[currNormalInd].z = gNormals[topRight].z = gNormals[above].z = gNormals[right].z = blendedNormal.z;
+
+                            // Fix Bottom-Left vertex of current patch.
+                            // contributing patches: below, bottom left, left, current
+                            currNormalInd = patchRight*vertexCountPerPatch - samples;
+                            left = patchLeft* vertexCountPerPatch + vertexCountPerPatch - 1;
+                            int bottomleft = patchBottomLeft * vertexCountPerPatch + samples - 1;
+                            int below = patchBelow * vertexCountPerPatch;
+                            //cout << "tl:" << topleft << " above:" << above << " bl:" << bottomleft << endl;
+
+                            blendedNormal.x = (gNormals[currNormalInd].x + gNormals[left].x
+                                + gNormals[bottomleft].x + gNormals[below].x) / 4.f;
+
+                            blendedNormal.y = (gNormals[currNormalInd].y + gNormals[left].y
+                                + gNormals[bottomleft].y + gNormals[below].y) / 4.f;
+
+                            blendedNormal.z = (gNormals[currNormalInd].z + gNormals[left].z
+                                + gNormals[bottomleft].z + gNormals[below].z) / 4.f;
+
+                            gNormals[currNormalInd].x = gNormals[left].x = gNormals[bottomleft].x = gNormals[below].x = blendedNormal.x;
+                            gNormals[currNormalInd].y = gNormals[left].y = gNormals[bottomleft].y = gNormals[below].y = blendedNormal.y;
+                            gNormals[currNormalInd].z = gNormals[left].z = gNormals[bottomleft].z = gNormals[below].z = blendedNormal.z;
+
+                            // Fix Bottom-Right vertex of current patch.
+                            // contributing patches: below, bottom left, left, current
+                            currNormalInd = patchRight * vertexCountPerPatch -1;
+                            right = (patchRight + 1) * vertexCountPerPatch - samples;
+                            int bottomright = patchBottomRight * vertexCountPerPatch;
+                            below = patchBelow * vertexCountPerPatch + samples - 1;
+                            //cout << "tl:" << topleft << " above:" << above << " bl:" << bottomleft << endl;
+
+                            blendedNormal.x = (gNormals[currNormalInd].x + gNormals[right].x
+                                + gNormals[bottomright].x + gNormals[below].x) / 4.f;
+
+                            blendedNormal.y = (gNormals[currNormalInd].y + gNormals[right].y
+                                + gNormals[bottomright].y + gNormals[below].y) / 4.f;
+
+                            blendedNormal.z = (gNormals[currNormalInd].z + gNormals[right].z
+                                + gNormals[bottomright].z + gNormals[below].z) / 4.f;
+
+                            gNormals[currNormalInd].x = gNormals[right].x = gNormals[bottomright].x = gNormals[below].x = blendedNormal.x;
+                            gNormals[currNormalInd].y = gNormals[right].y = gNormals[bottomright].y = gNormals[below].y = blendedNormal.y;
+                            gNormals[currNormalInd].z = gNormals[right].z = gNormals[bottomright].z = gNormals[below].z = blendedNormal.z;
+
+                            // testt
+                            /*gNormals[currNormalInd].x = gNormals[right].x = gNormals[bottomright].x = gNormals[below].x = 0.0f;
+                            gNormals[currNormalInd].y = gNormals[right].y = gNormals[bottomright].y = gNormals[below].y = 0.0f;
+                            gNormals[currNormalInd].z = gNormals[right].z = gNormals[bottomright].z = gNormals[below].z = 1.0f;*/
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
 }
 void updateTriangleNormals() 
 {
@@ -703,7 +952,7 @@ void display()
 
     float sinVal4 = glm::sin(sinVal2 * 3.f) * 0.55f;
     float change2Animated = change2 * sinVal4;
-    //float sinVal3 = glm::sin((sinVal+sinVal2) * 0.6f);
+    float sinVal3 = glm::sin((sinVal+sinVal2) * 0.6f);
 
     float fastChange = change2 * glm::sin((0.25f*sinVal-sinVal2) * 4.f);
 
@@ -717,50 +966,53 @@ void display()
     float try0 = change1 * sinVal * 4.f;
 
     change1Animated *= 8.f;
-    //patchModifyZ(1, 4 * change1Animated, 4, 0);
 
-    //if (totalPatchCount > 1) {
-    //    // for patch index 1
-    //    patchModifyZ(1, change2Animated, 4, 1);
-    //    patchModifyZ(2, 2.f * change1Animated, 4, 1);
-    //}
-
-    //if (totalPatchCount > 2) {
-
-    //    // for patch 2
-    //    patchModifyZ(3, 2 * sinVal4, 4, 2);
-    //    patchModifyZ(0, 2.f * change1Animated, 4, 2);
-    //}
-
-    //if (totalPatchCount > 3) {
-    //    // for patch 3
-    //    patchModifyZ(1, change2Animated, 4, 3);
-    //    patchModifyZ(2, -3.f * change1Animated, 4, 3);
-    //}
-
-    // Have first CP of first patch and (12th CP of last Row's first patch) slightly left positioned starting points!
-    //patchControlPointsX[0][0] = -0.25f;
-    //patchControlPointsX[totalPatchCount-patchPerAxis][12] = -0.25f;
-
-    //for (int i = 0; i < patchControlPointsZ.size(); i++) {
-    //    //traverse patches
-    //    int colInd = 1;
-    //    for (int j = colInd; j < 16; j += 4) {
-
-    //        patchControlPointsZ[i][j] = try0;
-    //    }
-
-    //    colInd = 2;
-    //    for (int j = colInd; j < 16; j += 4) {
-
-    //        patchControlPointsZ[i][j] = try0 *-3.f;
-    //    }
-    //}
     float val = try0 * 3.0f;
-    anim(0, val);
     anim(1, val);
-    anim(2, val);
-    anim(3, val);
+
+    float endchange = fastChange * 15.f;
+    float smallChange = sinVal3 *0.5f + 4.5;
+
+    for (int i = 0; i < patchPerAxis; i++) {
+        int pIndex = (i + 1) * patchPerAxis -1; 
+        int start = 2;
+        patchControlPointsZ[pIndex][start] = endchange;
+        patchControlPointsZ[pIndex][start+4] = endchange;
+        patchControlPointsZ[pIndex][start+8] = endchange;
+        patchControlPointsZ[pIndex][start+12] = endchange;
+
+        start = 3;
+        patchControlPointsX[pIndex][start] = smallChange;
+        patchControlPointsX[pIndex][start + 4] = smallChange;
+        patchControlPointsX[pIndex][start + 8] = smallChange;
+        patchControlPointsX[pIndex][start + 12] = smallChange;
+
+        if (i == 0) {
+            patchControlPointsX[pIndex][3] = smallChange - (0.25f * (1.0f/patchPerAxis)) ;
+
+        }
+        else if (i == patchPerAxis - 1) {
+             patchControlPointsX[pIndex][15] = smallChange - (0.6f * (1.0f/patchPerAxis));
+        }
+    }
+    //for (int i = 0; i < totalPatchCount; i++) 
+    //{
+    //    for (int j = 0; j < 16; j++) {
+
+    //        if (j % 2 == 0) {
+    //            patchControlPointsZ[i][j] = val;
+    //        }
+    //        else {
+
+    //            patchControlPointsZ[i][j] = - val;
+    //        }
+    //    }
+    //}
+  
+
+    //anim(1, val);
+    //anim(2, val);
+    //anim(3, val);
     
     //modifyCp(1,try0, 0);
     //modifyCp(2, try0*4.f, 0);
@@ -892,7 +1144,7 @@ void anim(int colIndex, float val) {
                 {
                     for (int j = col2; j < 16; j += 4) {
 
-                        patchControlPointsZ[patchIndex][j] = val;
+                        patchControlPointsZ[patchIndex][j] = -val;
                     }
                 }
                 else {
